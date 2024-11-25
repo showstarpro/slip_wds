@@ -11,7 +11,8 @@ import os
 import uuid
 from pathlib import Path
 
-import main as main_slip
+# import main as main_slip
+import main_wds as main_slip
 import submitit
 
 
