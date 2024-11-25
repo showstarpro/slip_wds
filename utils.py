@@ -75,9 +75,18 @@ def init_distributed_mode(args):
         args.rank = int(os.environ["RANK"])
         args.world_size = int(os.environ['WORLD_SIZE'])
         args.gpu = int(os.environ['LOCAL_RANK'])
-    elif 'SLURM_PROCID' in os.environ:
-        args.rank = int(os.environ['SLURM_PROCID'])
-        args.gpu = args.rank % torch.cuda.device_count()
+    elif is_using_distributed():
+        if 'SLURM_PROCID' in os.environ:
+            args.rank = int(os.environ['SLURM_PROCID'])
+            args.gpu = args.rank % torch.cuda.device_count()
+        else:
+            # DDP via torchrun, torch.distributed.launch
+            args.local_rank, _, _ = world_info_from_env()
+            # torch.distributed.init_process_group(
+            #     backend=args.dist_backend,
+            #     init_method=args.dist_url)
+            # args.world_size = torch.distributed.get_world_size()
+            # args.rank = torch.distributed.get_rank()
     else:
         print('Not using distributed mode')
         args.distributed = False
@@ -94,6 +103,31 @@ def init_distributed_mode(args):
     torch.distributed.barrier()
     setup_for_distributed(args.rank == 0)
 
+def is_using_distributed():
+    if 'WORLD_SIZE' in os.environ:
+        return int(os.environ['WORLD_SIZE']) > 1
+    if 'SLURM_NTASKS' in os.environ:
+        return int(os.environ['SLURM_NTASKS']) > 1
+    return False
+
+def world_info_from_env():
+    local_rank = 0
+    for v in ('LOCAL_RANK', 'MPI_LOCALRANKID', 'SLURM_LOCALID', 'OMPI_COMM_WORLD_LOCAL_RANK'):
+        if v in os.environ:
+            local_rank = int(os.environ[v])
+            break
+    global_rank = 0
+    for v in ('RANK', 'PMI_RANK', 'SLURM_PROCID', 'OMPI_COMM_WORLD_RANK'):
+        if v in os.environ:
+            global_rank = int(os.environ[v])
+            break
+    world_size = 1
+    for v in ('WORLD_SIZE', 'PMI_SIZE', 'SLURM_NTASKS', 'OMPI_COMM_WORLD_SIZE'):
+        if v in os.environ:
+            world_size = int(os.environ[v])
+            break
+
+    return local_rank, global_rank, world_size
 
 def scaled_all_reduce(tensors, is_scale=True):
     """Performs the scaled all_reduce operation on the provided tensors.
