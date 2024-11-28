@@ -11,9 +11,10 @@ import numpy as np
 import timm
 import torch
 from torch import nn
+from transformers import CLIPConfig, CLIPModel
 
 import losses
-
+from auxilary import MultiheadAttention
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
@@ -33,6 +34,7 @@ class ResidualAttentionBlock(nn.Module):
     def __init__(self, d_model: int, n_head: int, attn_mask: torch.Tensor = None):
         super().__init__()
 
+        # self.attn = MultiheadAttention(d_model, n_head)
         self.attn = nn.MultiheadAttention(d_model, n_head)
         self.ln_1 = LayerNorm(d_model)
         self.mlp = nn.Sequential(OrderedDict([
@@ -42,6 +44,21 @@ class ResidualAttentionBlock(nn.Module):
         ]))
         self.ln_2 = LayerNorm(d_model)
         self.attn_mask = attn_mask
+
+    #     self.attn_probs = None
+    #     self.attn_grad = None
+
+    # def set_attn_probs(self, attn_probs):
+    #     self.attn_probs = attn_probs
+
+    # def set_attn_grad(self, attn_grad):
+    #     self.attn_grad = attn_grad
+
+
+    # def attention(self, x: torch.Tensor):
+    #     self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+    #     return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask, attention_probs_forward_hook=self.set_attn_probs,
+    #                     attention_probs_backwards_hook=self.set_attn_grad)[0]
 
     def attention(self, x: torch.Tensor):
         self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
@@ -129,6 +146,7 @@ class CLIP(nn.Module):
 
     def encode_image(self, image):
         x = self.visual(image)
+        x = x.pooler_output
         x = x @ self.image_projection
 
         return x
@@ -222,8 +240,8 @@ class SLIP(CLIP):
         ]))
 
     def forward(self, image, text, aug1, aug2):
-        aug1_embed = self.image_mlp(self.visual(aug1))
-        aug2_embed = self.image_mlp(self.visual(aug2))
+        aug1_embed = self.image_mlp(self.visual(aug1).pooler_output )
+        aug2_embed = self.image_mlp(self.visual(aug2).pooler_output )
         
         image_embed = self.encode_image(image)
         text_embed = self.encode_text(text)
@@ -234,6 +252,31 @@ class SLIP(CLIP):
                 'aug1_embed': aug1_embed,
                 'aug2_embed': aug2_embed}
 
+
+
+# Define a new CLIP configuration
+config = CLIPConfig(
+    text_config=dict(
+        vocab_size=50265,  # Common vocabulary size for text
+        hidden_size=512,   # Size of hidden layers
+        num_hidden_layers=12,
+        num_attention_heads=8,
+        intermediate_size=2048,
+        hidden_act="gelu",
+        layer_norm_eps=1e-5
+    ),
+    vision_config=dict(
+        hidden_size=768,   # Size of hidden layers for vision input
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
+        image_size=224,
+        patch_size=16,
+        hidden_act="gelu",
+        layer_norm_eps=1e-5
+    ),
+    projection_dim=512      # Projection size for similarity calculation
+)
 
 def get_loss(model, ssl_temp, ssl_scale):
     if model.startswith('SLIP'):
@@ -286,7 +329,9 @@ def SLIP_VITS16(**kwargs):
 
 
 def CLIP_VITB16(**kwargs):
-    vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
+    # vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
+    model_clip_transformer = CLIPModel(config)
+    vision_model = model_clip_transformer.vision_model
     model = CLIP(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
         transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
 
@@ -301,7 +346,9 @@ def SIMCLR_VITB16(**kwargs):
 
 
 def SLIP_VITB16(**kwargs):
-    vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
+    # vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
+    model_clip_transformer = CLIPModel(config)
+    vision_model = model_clip_transformer.vision_model
     model = SLIP(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
         transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
 

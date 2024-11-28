@@ -3,7 +3,53 @@ from tokenizer import SimpleTokenizer
 from data import get_data
 import torchvision.transforms as transforms
 import argparse
+from transformers import CLIPConfig, CLIPModel
+import models
 
+# Define a new CLIP configuration
+config = CLIPConfig(
+    text_config=dict(
+        vocab_size=50265,  # Common vocabulary size for text
+        hidden_size=512,   # Size of hidden layers
+        num_hidden_layers=12,
+        num_attention_heads=8,
+        intermediate_size=2048,
+        hidden_act="gelu",
+        layer_norm_eps=1e-5
+    ),
+    vision_config=dict(
+        hidden_size=768,   # Size of hidden layers for vision input
+        num_hidden_layers=12,
+        num_attention_heads=12,
+        intermediate_size=3072,
+        image_size=224,
+        patch_size=16,
+        hidden_act="gelu",
+        layer_norm_eps=1e-5
+    ),
+    projection_dim=512      # Projection size for similarity calculation
+)
+
+model = CLIPModel(config)
+# model.save_pretrained('')
+
+inputs = torch.randn(2, 3, 224, 224)
+txt = torch.randn(2, 77)
+outputs = model.vision_model(inputs)
+
+print(outputs)
+
+model_slip = getattr(models, "SLIP_VITB16")(ssl_mlp_dim=4096, ssl_emb_dim=256)
+vision_tower = model_slip.visual
+vision_tower_state_dict = vision_tower.state_dict()
+torch.save(vision_tower_state_dict,'/lpai/test_vitb_transformer.pt' )
+# vision_tower.save_pretrained("/lpai/test_vitb_transformer")
+
+msg = model.vision_model.load_state_dict(vision_tower_state_dict)
+print(msg)
+
+# out = model_slip(inputs,txt, inputs, inputs)
+# print(out)
 # tokenizer = SimpleTokenizer()
 
 # texts = "我爱吃大米$"

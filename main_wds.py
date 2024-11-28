@@ -131,7 +131,7 @@ def get_args_parser():
     parser.add_argument('--epochs', default=25, type=int)
     parser.add_argument('--warmup-epochs', default=1, type=int)
     parser.add_argument('--start-epoch', default=0, type=int)
-    parser.add_argument('--batch-size', default=64, type=int,
+    parser.add_argument('--batch-size', default=4, type=int,
                         help='number of samples per-device/per-gpu')
     parser.add_argument('--lr', default=3e-3, type=float)
     parser.add_argument('--lr-start', default=1e-6, type=float,
