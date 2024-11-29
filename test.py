@@ -42,11 +42,12 @@ print(outputs)
 model_slip = getattr(models, "SLIP_VITB16")(ssl_mlp_dim=4096, ssl_emb_dim=256)
 vision_tower = model_slip.visual
 vision_tower_state_dict = vision_tower.state_dict()
-torch.save(vision_tower_state_dict,'/lpai/test_vitb_transformer.pt' )
+torch.save(model_slip.state_dict(),'/lpai/test_slipb_transformer.pt' )
 # vision_tower.save_pretrained("/lpai/test_vitb_transformer")
 
-msg = model.vision_model.load_state_dict(vision_tower_state_dict)
+msg = model.vision_model.load_state_dict(model_slip.visual.state_dict())
 print(msg)
+model.save_pretrained("/lpai/test_vitb_transformer")
 
 # out = model_slip(inputs,txt, inputs, inputs)
 # print(out)
