@@ -102,21 +102,22 @@ class CLIP(nn.Module):
 
         self.context_length = context_length
         self.vision_width = vision_width
+        self.transformer_width = transformer_width
 
         self.visual = vision_model
         self.text = text_model
 
-        self.transformer = Transformer(
-            width=transformer_width,
-            layers=transformer_layers,
-            heads=transformer_heads,
-            attn_mask=self.build_attention_mask(),
-        )
+        # self.transformer = Transformer(
+        #     width=transformer_width,
+        #     layers=transformer_layers,
+        #     heads=transformer_heads,
+        #     attn_mask=self.build_attention_mask(),
+        # )
 
-        self.vocab_size = vocab_size
-        self.token_embedding = nn.Embedding(vocab_size, transformer_width)
-        self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
-        self.ln_final = LayerNorm(transformer_width)
+        # self.vocab_size = vocab_size
+        # self.token_embedding = nn.Embedding(vocab_size, transformer_width)
+        # self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
+        # self.ln_final = LayerNorm(transformer_width)
 
         self.image_projection = nn.Parameter(torch.empty(vision_width, embed_dim))
         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
@@ -125,20 +126,20 @@ class CLIP(nn.Module):
         self.initialize_parameters()
 
     def initialize_parameters(self):
-        nn.init.normal_(self.token_embedding.weight, std=0.02)
-        nn.init.normal_(self.positional_embedding, std=0.01)
+        # nn.init.normal_(self.token_embedding.weight, std=0.02)
+        # nn.init.normal_(self.positional_embedding, std=0.01)
 
-        proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
-        attn_std = self.transformer.width ** -0.5
-        fc_std = (2 * self.transformer.width) ** -0.5
-        for block in self.transformer.resblocks:
-            nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
-            nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
-            nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
-            nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+        # proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+        # attn_std = self.transformer.width ** -0.5
+        # fc_std = (2 * self.transformer.width) ** -0.5
+        # for block in self.transformer.resblocks:
+        #     nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+        #     nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+        #     nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+        #     nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
 
         nn.init.normal_(self.image_projection, std=self.vision_width ** -0.5)
-        nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+        nn.init.normal_(self.text_projection, std=self.transformer_width ** -0.5)
 
     def build_attention_mask(self):
         # lazily create causal attention mask, with full attention between the vision tokens
@@ -155,19 +156,19 @@ class CLIP(nn.Module):
 
         return x
 
-    def encode_text(self, text):
-        x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
-        x = x + self.positional_embedding
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.transformer(x)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.ln_final(x)
+    # def encode_text(self, text):
+    #     x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+    #     x = x + self.positional_embedding
+    #     x = x.permute(1, 0, 2)  # NLD -> LND
+    #     x = self.transformer(x)
+    #     x = x.permute(1, 0, 2)  # LND -> NLD
+    #     x = self.ln_final(x)
 
-        # x.shape = [batch_size, n_ctx, transformer.width]
-        # take features from the eot embedding (eot_token is the highest number in each sequence)
-        x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+    #     # x.shape = [batch_size, n_ctx, transformer.width]
+    #     # take features from the eot embedding (eot_token is the highest number in each sequence)
+    #     x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
 
-        return x
+    #     return x
 
     def encode_text1(self, text):
         x = self.text(text)
