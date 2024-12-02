@@ -15,6 +15,8 @@ from transformers import CLIPConfig, CLIPModel
 
 import losses
 from auxilary import MultiheadAttention
+import os
+import json 
 
 class LayerNorm(nn.LayerNorm):
     """Subclass torch's LayerNorm to handle fp16."""
@@ -87,6 +89,7 @@ class CLIP(nn.Module):
                  # vision
                  vision_width: int,
                  vision_model: nn.Module,
+                 text_model: nn.Module,
                  # text
                  context_length: int,
                  vocab_size: int,
@@ -101,6 +104,7 @@ class CLIP(nn.Module):
         self.vision_width = vision_width
 
         self.visual = vision_model
+        self.text = text_model
 
         self.transformer = Transformer(
             width=transformer_width,
@@ -165,9 +169,15 @@ class CLIP(nn.Module):
 
         return x
 
-    def forward(self, image, text):
+    def encode_text1(self, text):
+        x = self.text(text)
+        x = x.pooler_output
+        x = x @ self.text_projection
+        return x
+
+    def forward(self, image, text, aug1, aug2):
         image_embed = self.encode_image(image)
-        text_embed = self.encode_text(text)
+        text_embed = self.encode_text1(text)
 
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
@@ -244,7 +254,7 @@ class SLIP(CLIP):
         aug2_embed = self.image_mlp(self.visual(aug2).pooler_output )
         
         image_embed = self.encode_image(image)
-        text_embed = self.encode_text(text)
+        text_embed = self.encode_text1(text)
 
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
@@ -371,8 +381,60 @@ def SIMCLR_VITL16(**kwargs):
 
 
 def SLIP_VITL16(**kwargs):
-    vision_model = timm.create_model('vit_large_patch16_224', num_classes=0)
-    model = SLIP(embed_dim=512, vision_width=1024, vision_model=vision_model, context_length=77, vocab_size=49408,
+    # vision_model = timm.create_model('vit_large_patch16_224', num_classes=0)
+    current_dir = os.path.dirname(__file__)
+    file_path = os.path.join(current_dir, 'vit-large-patch14-336.json')
+    with open(file_path, 'r') as json_file:
+        config_dict = json.load(json_file)
+    clip_config = CLIPConfig(
+    projection_dim=config_dict["projection_dim"],
+    text_config=config_dict["text_config"],
+    vision_config=config_dict["vision_config"]
+    )
+    model_clip_transformer = CLIPModel(clip_config)
+    vision_model = model_clip_transformer.vision_model
+    text_model = model_clip_transformer.text_model
+    model = SLIP(embed_dim=768, vision_width=1024, vision_model=vision_model, text_model=text_model ,context_length=77, vocab_size=49408,
         transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
+
+    return model
+
+
+
+def SLIP_VITL14(**kwargs):
+    # vision_model = timm.create_model('vit_large_patch16_224', num_classes=0)
+    current_dir = os.path.dirname(__file__)
+    file_path = os.path.join(current_dir, 'vit-large-patch14-336.json')
+    with open(file_path, 'r') as json_file:
+        config_dict = json.load(json_file)
+    clip_config = CLIPConfig(
+    projection_dim=config_dict["projection_dim"],
+    text_config=config_dict["text_config"],
+    vision_config=config_dict["vision_config"]
+    )
+    model_clip_transformer = CLIPModel(clip_config)
+    vision_model = model_clip_transformer.vision_model
+    text_model = model_clip_transformer.text_model
+    model = SLIP(embed_dim=768, vision_width=1024, vision_model=vision_model, text_model=text_model ,context_length=77, vocab_size=49408,
+        transformer_width=768, transformer_heads=8, transformer_layers=12, **kwargs)
+
+    return model
+
+def CLIP_VITL14(**kwargs):
+    # vision_model = timm.create_model('vit_large_patch16_224', num_classes=0)
+    current_dir = os.path.dirname(__file__)
+    file_path = os.path.join(current_dir, 'vit-large-patch14-336.json')
+    with open(file_path, 'r') as json_file:
+        config_dict = json.load(json_file)
+    clip_config = CLIPConfig(
+    projection_dim=config_dict["projection_dim"],
+    text_config=config_dict["text_config"],
+    vision_config=config_dict["vision_config"]
+    )
+    model_clip_transformer = CLIPModel(clip_config)
+    vision_model = model_clip_transformer.vision_model
+    text_model = model_clip_transformer.text_model
+    model = CLIP(embed_dim=768, vision_width=1024, vision_model=vision_model, text_model=text_model, context_length=77, vocab_size=49408,
+        transformer_width=768, transformer_heads=8, transformer_layers=12, **kwargs)
 
     return model

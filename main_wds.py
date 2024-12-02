@@ -117,7 +117,7 @@ def get_args_parser():
     )
     parser.add_argument('--output-dir', default='./', type=str, help='output dir')
     # Model
-    parser.add_argument('--model', default='SLIP_VITB16', type=str)
+    parser.add_argument('--model', default='SLIP_VITL14', type=str)
     parser.add_argument('--ssl-mlp-dim', default=4096, type=int,
                         help='hidden dim of SimCLR mlp projection head')
     parser.add_argument('--ssl-emb-dim', default=256, type=int,
@@ -242,13 +242,13 @@ def main(args):
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
     train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=(0.5, 1.0)),
+            transforms.RandomResizedCrop(336, scale=(0.5, 1.0)),
             transforms.ToTensor(),
             normalize
         ])
     val_transform = transforms.Compose([
-            transforms.Resize(224),
-            transforms.CenterCrop(224),
+            transforms.Resize(336),
+            transforms.CenterCrop(336),
             transforms.ToTensor(),
             normalize
         ])
