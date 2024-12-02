@@ -175,7 +175,7 @@ class CLIP(nn.Module):
         x = x @ self.text_projection
         return x
 
-    def forward(self, image, text, aug1, aug2):
+    def forward(self, image, text):
         image_embed = self.encode_image(image)
         text_embed = self.encode_text1(text)
 

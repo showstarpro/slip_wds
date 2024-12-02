@@ -117,7 +117,7 @@ def get_args_parser():
     )
     parser.add_argument('--output-dir', default='./', type=str, help='output dir')
     # Model
-    parser.add_argument('--model', default='SLIP_VITL14', type=str)
+    parser.add_argument('--model', default='CLIP_VITL14', type=str)
     parser.add_argument('--ssl-mlp-dim', default=4096, type=int,
                         help='hidden dim of SimCLR mlp projection head')
     parser.add_argument('--ssl-emb-dim', default=256, type=int,
