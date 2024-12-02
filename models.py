@@ -405,7 +405,7 @@ def SLIP_VITL16(**kwargs):
 def SLIP_VITL14(**kwargs):
     # vision_model = timm.create_model('vit_large_patch16_224', num_classes=0)
     current_dir = os.path.dirname(__file__)
-    file_path = os.path.join(current_dir, 'vit-large-patch14-336.json')
+    file_path = os.path.join(current_dir, 'vit-large-patch14.json')
     with open(file_path, 'r') as json_file:
         config_dict = json.load(json_file)
     clip_config = CLIPConfig(
@@ -424,7 +424,7 @@ def SLIP_VITL14(**kwargs):
 def CLIP_VITL14(**kwargs):
     # vision_model = timm.create_model('vit_large_patch16_224', num_classes=0)
     current_dir = os.path.dirname(__file__)
-    file_path = os.path.join(current_dir, 'vit-large-patch14-336.json')
+    file_path = os.path.join(current_dir, 'vit-large-patch14.json')
     with open(file_path, 'r') as json_file:
         config_dict = json.load(json_file)
     clip_config = CLIPConfig(
