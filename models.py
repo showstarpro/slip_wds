@@ -170,7 +170,7 @@ class CLIP(nn.Module):
 
     #     return x
 
-    def encode_text1(self, text):
+    def encode_text(self, text):
         x = self.text(text)
         x = x.pooler_output
         x = x @ self.text_projection
@@ -178,7 +178,7 @@ class CLIP(nn.Module):
 
     def forward(self, image, text):
         image_embed = self.encode_image(image)
-        text_embed = self.encode_text1(text)
+        text_embed = self.encode_text(text)
 
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
@@ -255,7 +255,7 @@ class SLIP(CLIP):
         aug2_embed = self.image_mlp(self.visual(aug2).pooler_output )
         
         image_embed = self.encode_image(image)
-        text_embed = self.encode_text1(text)
+        text_embed = self.encode_text(text)
 
         return {'image_embed': image_embed,
                 'text_embed': text_embed,
