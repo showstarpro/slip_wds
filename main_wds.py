@@ -36,7 +36,7 @@ def get_args_parser():
     parser.add_argument(
             "--train-data",
             type=str,
-            default='/lpai/dataset/cc12m/0-1-0/cc12m-wds/cc12m-train-{0000..2175}.tar',
+            default='/lpai/dataset/datacomp1b/0-2-0/datacomp1b_finished/data_dir*/shards/*.tar',
             help="Path to file(s) with training data. When using webdataset, multiple datasources can be combined using the `::` separator.",
         )
     parser.add_argument(
