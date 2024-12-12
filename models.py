@@ -559,14 +559,18 @@ class MultiTask(CLIP):
         B, C, H, W = image.shape
         ## add noise
         img = self.patchify(image)
-        noise = torch.randn_like(img)
-        ## 不同等级系数
         b, l, d = img.shape
-        alpha = torch.rand(b, l).to(device=noise.device)
-        noise = noise * alpha.unsqueeze(-1)
-        noise = self.unpatchify(noise, C, H, W)
-        t = torch.randint(0, self.train_diffusion.num_timesteps, (image.shape[0],), device=image.device)
-        x_t = self.train_diffusion.q_sample(image, t, noise)
+        img = img.reshape(b * l, -1)
+        noise = torch.randn_like(img) # [b*l, d] 
+        ## 不同等级系数
+        # alpha = torch.rand(b, l).to(device=noise.device)
+        # noise = noise * alpha.unsqueeze(-1)
+        # noise = noise.reshape(b, l, -1)
+        # noise = self.unpatchify(noise, C, H, W)
+        t = torch.randint(0, self.train_diffusion.num_timesteps, (img.shape[0],), device=img.device) # [b*l]
+        x_t = self.train_diffusion.q_sample(img, t, noise) # [b*l, d]
+        x_t = x_t.reshape(b, l, -1)
+        x_t = self.unpatchify(x_t, C, H, W) # recover shape [B, C, H, W]
 
         img1 = self.visual(x_t) ## with noise
         img2 = self.visual(image) ## without noise
@@ -588,11 +592,11 @@ class MultiTask(CLIP):
         # n_image_embed = image_embed[:, 1:].reshape(B * L, -1)
         # n_t = torch.randint(0, self.train_diffusion.num_timesteps, (n_image_embed.shape[0],), device=n_image_embed.device)
         # model_kwargs = dict(c=None) ## none
-        alpha = alpha.reshape(B * L, -1).squeeze(-1)
-        rec_noise = self.decoder(n_imgnoise_embed, alpha) ## recover noise
-        noise = self.patchify(noise)
-        B, L, _ = noise.shape
-        noise = noise.reshape(B * L, -1)
+        # alpha = alpha.reshape(B * L, -1).squeeze(-1)
+        rec_noise = self.decoder(n_imgnoise_embed, t) ## recover noise
+        # noise = self.patchify(noise)
+        # B, L, _ = noise.shape
+        # noise = noise.reshape(B * L, -1)
 
         ## add img to text decode
         text_tokens = self.text_decoder(img_embed_p)
