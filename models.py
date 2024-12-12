@@ -157,8 +157,8 @@ class CLIP(nn.Module):
 
     def encode_image(self, image):
         x = self.visual(image)
-        # x = x.pooler_output
-        # x = x @ self.image_projection
+        x = x.pooler_output
+        x = x @ self.image_projection
 
         return x
 
@@ -568,8 +568,8 @@ class MultiTask(CLIP):
         t = torch.randint(0, self.train_diffusion.num_timesteps, (image.shape[0],), device=image.device)
         x_t = self.train_diffusion.q_sample(image, t, noise)
 
-        img1 = self.encode_image(x_t) ## with noise
-        img2 = self.encode_image(image) ## without noise
+        img1 = self.visual(x_t) ## with noise
+        img2 = self.visual(image) ## without noise
 
         ## diffusion
         imgnoise_embed = self.norm(img1.last_hidden_state) ## feature with noise
@@ -578,7 +578,7 @@ class MultiTask(CLIP):
         aug1_embed = self.image_mlp(img1.pooler_output)
         aug2_embed = self.image_mlp(img2.pooler_output)
         ## clip and superclass
-        img_embed_p = img2.pooler_output @ self.image_projection
+        img_embed_p = self.encode_image(image)
         # imgnoise_embed_p = self.encode_image(x_t)
         text_embed = self.encode_text(text)
 
