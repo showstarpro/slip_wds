@@ -157,8 +157,8 @@ class CLIP(nn.Module):
 
     def encode_image(self, image):
         x = self.visual(image)
-        x = x.pooler_output
-        x = x @ self.image_projection
+        # x = x.pooler_output
+        # x = x @ self.image_projection
 
         return x
 
@@ -370,7 +370,7 @@ class SimpleMLPAdaLN(nn.Module):
         in_channels,
         model_channels,
         out_channels,
-        z_channels,
+        # z_channels,
         num_res_blocks,
         grad_checkpointing=False
     ):
@@ -383,7 +383,7 @@ class SimpleMLPAdaLN(nn.Module):
         self.grad_checkpointing = grad_checkpointing
 
         self.time_embed = TimestepEmbedder(model_channels)
-        self.cond_embed = nn.Linear(z_channels, model_channels)
+        # self.cond_embed = nn.Linear(z_channels, model_channels)
 
         self.input_proj = nn.Linear(in_channels, model_channels)
 
@@ -421,19 +421,17 @@ class SimpleMLPAdaLN(nn.Module):
         nn.init.constant_(self.final_layer.linear.weight, 0)
         nn.init.constant_(self.final_layer.linear.bias, 0)
 
-    def forward(self, x, t, c):
+    def forward(self, x, t):
         """
         Apply the model to an input batch.
         :param x: an [N x C] Tensor of inputs.
         :param t: a 1-D batch of timesteps.
-        :param c: conditioning from AR transformer.
         :return: an [N x C] Tensor of outputs.
         """
         x = self.input_proj(x)
         t = self.time_embed(t)
-        c = self.cond_embed(c)
 
-        y = t + c
+        y = t
 
         if self.grad_checkpointing and not torch.jit.is_scripting():
             for block in self.res_blocks:
@@ -444,10 +442,10 @@ class SimpleMLPAdaLN(nn.Module):
 
         return self.final_layer(x, y)
 
-    def forward_with_cfg(self, x, t, c, cfg_scale):
+    def forward_with_cfg(self, x, t, cfg_scale):
         half = x[: len(x) // 2]
         combined = torch.cat([half, half], dim=0)
-        model_out = self.forward(combined, t, c)
+        model_out = self.forward(combined, t)
         eps, rest = model_out[:, :self.in_channels], model_out[:, self.in_channels:]
         cond_eps, uncond_eps = torch.split(eps, len(eps) // 2, dim=0)
         half_eps = uncond_eps + cfg_scale * (cond_eps - uncond_eps)
@@ -499,15 +497,16 @@ class MultiTask(CLIP):
 
         self.image_mlp = self._build_mlp(in_dim=self.vision_width, mlp_dim=ssl_mlp_dim, out_dim=ssl_emb_dim)
         self.train_diffusion = create_diffusion(timestep_respacing="", noise_schedule="cosine")
-        self.token_embed_dim = 512
+        self.token_embed_dim = 768
         self.decoder = SimpleMLPAdaLN(
             in_channels=self.token_embed_dim,
             model_channels=self.vision_width,
             out_channels=self.vision_width,
-            z_channels=decoder_embed_dim,
+            # z_channels=decoder_embed_dim,
             num_res_blocks=diffloss_d,
             grad_checkpointing=grad_checkpointing
         )
+        self.norm = nn.LayerNorm(self.vision_width)
         self.diffusion_batch_mul = 4
         clshead_cfg = ClassHeadCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         self.text_decoder = _build_cls_head(
@@ -550,12 +549,11 @@ class MultiTask(CLIP):
         x = x.reshape(bsz, C, h * p, w * p)
         return x  # [n, c, h, w]
     
-    def encode(self, image):
-        x = self.visual(image)
-        x = x.last_hidden_state
-        x = x @ self.image_projection
-
-        return x
+    # def encode(self, image):
+    #     x = self.visual(image)
+    #     x = x.last_hidden_state
+    #     x = self.norm(x)
+    #     return x
 
     def forward(self, image, text):
         B, C, H, W = image.shape
@@ -563,29 +561,35 @@ class MultiTask(CLIP):
         img = self.patchify(image)
         noise = torch.randn_like(img)
         ## 不同等级系数
-        alpha = torch.rand_like(img)
-        noise = noise * alpha
+        b, l, d = img.shape
+        alpha = torch.rand(b, l).to(device=noise.device)
+        noise = noise * alpha.unsqueeze(-1)
         noise = self.unpatchify(noise, C, H, W)
         t = torch.randint(0, self.train_diffusion.num_timesteps, (image.shape[0],), device=image.device)
         x_t = self.train_diffusion.q_sample(image, t, noise)
+
+        img1 = self.encode_image(x_t) ## with noise
+        img2 = self.encode_image(image) ## without noise
+
         ## diffusion
-        imgnoise_embed = self.encode(x_t) ## with noise
-        image_embed = self.encode(image) ## without noise
+        imgnoise_embed = self.norm(img1.last_hidden_state) ## feature with noise
+        # image_embed = self.encode(image) ## without noise
         ## simclr
-        aug1_embed = self.image_mlp(self.visual(x_t).pooler_output)
-        aug2_embed = self.image_mlp(self.visual(image).pooler_output)
+        aug1_embed = self.image_mlp(img1.pooler_output)
+        aug2_embed = self.image_mlp(img2.pooler_output)
         ## clip and superclass
-        img_embed_p = self.encode_image(image)
+        img_embed_p = img2.pooler_output @ self.image_projection
         # imgnoise_embed_p = self.encode_image(x_t)
         text_embed = self.encode_text(text)
 
         ## add mar mlp as decoder, reshape操作参考mar code
         B, L, _ = imgnoise_embed[:, 1:].shape
         n_imgnoise_embed = imgnoise_embed[:, 1:].reshape(B * L, -1)
-        n_image_embed = image_embed[:, 1:].reshape(B * L, -1)
-        n_t = torch.randint(0, self.train_diffusion.num_timesteps, (n_image_embed.shape[0],), device=n_image_embed.device)
-        model_kwargs = dict(c=n_image_embed) ## clean feature token as condition
-        rec_noise = self.decoder(n_imgnoise_embed, n_t, **model_kwargs) ## recover noise
+        # n_image_embed = image_embed[:, 1:].reshape(B * L, -1)
+        # n_t = torch.randint(0, self.train_diffusion.num_timesteps, (n_image_embed.shape[0],), device=n_image_embed.device)
+        # model_kwargs = dict(c=None) ## none
+        alpha = alpha.reshape(B * L, -1).squeeze(-1)
+        rec_noise = self.decoder(n_imgnoise_embed, alpha) ## recover noise
         noise = self.patchify(noise)
         B, L, _ = noise.shape
         noise = noise.reshape(B * L, -1)
@@ -648,6 +652,8 @@ def get_metric_names(model):
         return ['loss', 'clip_loss', 'ssl_loss', 'clip_acc', 'ssl_acc']
     elif model.startswith('CLIP'):
         return ['loss', 'clip_loss', 'clip_acc']
+    elif model.startswith('MultiTask'):
+        return ['loss', 'clip_loss', 'ssl_loss', 'diff_loss', 'cls_loss', 'clip_acc', 'ssl_acc']
     else:
         return ['loss', 'ssl_loss', 'ssl_acc']
 
@@ -697,7 +703,7 @@ def MultiTask_VITB16(**kwargs):
     model_clip_transformer = CLIPModel(config)
     vision_model = model_clip_transformer.vision_model
     model = MultiTask(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
-        transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
+        transformer_width=512, transformer_heads=8, transformer_layers=12, text_cfg={}, **kwargs)
 
     return model
 
