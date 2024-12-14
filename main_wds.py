@@ -122,6 +122,8 @@ def get_args_parser():
                         help='hidden dim of SimCLR mlp projection head')
     parser.add_argument('--ssl-emb-dim', default=256, type=int,
                         help='output embed dim of SimCLR mlp projection head')
+    parser.add_argument('--clip-scale', default=1.0, type=float,
+                        help='loss scale for CLIP objective')
     parser.add_argument('--ssl-scale', default=1.0, type=float,
                         help='loss scale for SimCLR objective')
     parser.add_argument('--diff-scale', default=1.0, type=float,
@@ -190,7 +192,7 @@ def main(args):
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], bucket_cap_mb=200)
 
     # define loss function (criterion) and optimizer
-    criterion = models.get_loss(args.model, args.ssl_temp, args.ssl_scale, args.diff_scale, args.cls_scale).cuda(args.gpu)
+    criterion = models.get_loss(args.model, args.ssl_temp, args.clip_scale, args.ssl_scale, args.diff_scale, args.cls_scale).cuda(args.gpu)
 
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():

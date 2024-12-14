@@ -638,10 +638,10 @@ config = CLIPConfig(
     projection_dim=512      # Projection size for similarity calculation
 )
 
-def get_loss(model, ssl_temp, ssl_scale, diff_scale, cls_scale):
+def get_loss(model, ssl_temp, clip_scale, ssl_scale, diff_scale, cls_scale):
     if model.startswith('MultiTask'):
         ssl_loss = losses.SIMCLRLoss(temperature=ssl_temp)
-        return losses.MultiTaskLoss(ssl_loss, ssl_scale, diff_scale, cls_scale)
+        return losses.MultiTaskLoss(ssl_loss, clip_scale, ssl_scale, diff_scale, cls_scale)
     if model.startswith('SLIP'):
         ssl_loss = losses.SIMCLRLoss(temperature=ssl_temp)
         return losses.SLIPLoss(ssl_loss, ssl_scale)

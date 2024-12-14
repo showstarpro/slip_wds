@@ -189,9 +189,10 @@ class CLSLoss(nn.Module):
         return {'loss': loss, 'cls_loss': loss}
 
 class MultiTaskLoss(nn.Module):
-    def __init__(self, ssl_loss, ssl_scale, diff_scale, cls_scale):
+    def __init__(self, ssl_loss, clip_scale, ssl_scale, diff_scale, cls_scale):
         super().__init__()
         self.clip_loss = CLIPLoss()
+        self.clip_scale = clip_scale
         self.ssl_loss = ssl_loss
         self.ssl_scale = ssl_scale
         self.diff_loss = DiffLoss()
@@ -214,7 +215,7 @@ class MultiTaskLoss(nn.Module):
         cls_loss_dict = self.cls_loss(outputs)
         cls_loss = cls_loss_dict['cls_loss']
 
-        return {'loss': clip_loss + self.ssl_scale * ssl_loss + self.diff_scale * diff_loss + self.cls_scale * cls_loss,
+        return {'loss': self.clip_scale * clip_loss + self.ssl_scale * ssl_loss + self.diff_scale * diff_loss + self.cls_scale * cls_loss,
                 'clip_loss': clip_loss,
                 'clip_acc': clip_acc,
                 'ssl_loss': ssl_loss,
