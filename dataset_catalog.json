@@ -142,9 +142,9 @@
         "test": "test"
     },
     "imagenet": {
-        "path": "/path/to/dataset",
+        "path": "/lpai/dataset/imagenet-1k/0-1-0",
         "type": "imagefolder",
         "train": "train",
-        "test": "val"
+        "test": "ILSVRC2012/val"
     }
 }

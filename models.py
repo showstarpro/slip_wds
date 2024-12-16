@@ -614,6 +614,28 @@ class MultiTask(CLIP):
                 "num_samples": self.num_samples,
                 'logit_scale': self.logit_scale.exp()}
 
+class LinearModel(nn.Module):
+    def __init__(
+        self,
+        model,
+        num_classes=1000,
+    ):
+        super().__init__()
+        self.visual = model
+        self.num_classes = num_classes
+        self.vision_width = model.config.hidden_size
+        self.norm = nn.LayerNorm(self.vision_width)
+        self.head_drop = nn.Dropout(0.)
+        self.head = nn.Linear(self.vision_width, self.num_classes)
+
+    def forward(self, image):
+        x = self.visual(image).pooler_output
+        x = self.norm(x)
+        x = self.head_drop(x)
+        output = self.head(x)
+
+        return output
+
 # Define a new CLIP configuration
 config = CLIPConfig(
     text_config=dict(
@@ -708,6 +730,13 @@ def MultiTask_VITB16(**kwargs):
     vision_model = model_clip_transformer.vision_model
     model = MultiTask(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
         transformer_width=512, transformer_heads=8, transformer_layers=12, text_cfg={}, **kwargs)
+
+    return model
+
+def LinearModel_VITB16(**kwargs):
+    model_clip_transformer = CLIPModel(config)
+    vision_model = model_clip_transformer.vision_model
+    model = LinearModel(model=vision_model, **kwargs)
 
     return model
 
