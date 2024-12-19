@@ -157,7 +157,7 @@ class CLIP(nn.Module):
 
     def encode_image(self, image):
         x = self.visual(image)
-        x = x.pooler_output
+        # x = x.pooler_output
         x = x @ self.image_projection
 
         return x
@@ -576,11 +576,14 @@ class MultiTask(CLIP):
         img2 = self.visual(image) ## without noise
 
         ## diffusion
-        imgnoise_embed = self.norm(img1.last_hidden_state) ## feature with noise
+        # imgnoise_embed = self.norm(img1.last_hidden_state) ## feature with noise
+        imgnoise_embed = self.norm(self.visual.forward_features(x_t))
         # image_embed = self.encode(image) ## without noise
         ## simclr
-        aug1_embed = self.image_mlp(img1.pooler_output)
-        aug2_embed = self.image_mlp(img2.pooler_output)
+        # aug1_embed = self.image_mlp(img1.pooler_output)
+        # aug2_embed = self.image_mlp(img2.pooler_output)
+        aug1_embed = self.image_mlp(img1)
+        aug2_embed = self.image_mlp(img2)
         ## clip and superclass
         img_embed_p = self.encode_image(image)
         # imgnoise_embed_p = self.encode_image(x_t)
@@ -725,9 +728,9 @@ def CLIP_VITB16(**kwargs):
     return model
 
 def MultiTask_VITB16(**kwargs):
-    # vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
-    model_clip_transformer = CLIPModel(config)
-    vision_model = model_clip_transformer.vision_model
+    vision_model = timm.create_model('vit_base_patch16_224', num_classes=0)
+    # model_clip_transformer = CLIPModel(config)
+    # vision_model = model_clip_transformer.vision_model
     model = MultiTask(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
         transformer_width=512, transformer_heads=8, transformer_layers=12, text_cfg={}, **kwargs)
 
