@@ -109,7 +109,7 @@ def main(args):
             # retain only base_encoder up to before the embedding layer
             if k.startswith(visual_keyword) and not k.startswith(visual_keyword + linear_keyword):
                 # remove prefix
-                state_dict[k[len(visual_keyword):]] = state_dict[k]
+                state_dict[k[len('module.'):]] = state_dict[k]
             # delete renamed or unused k
             del state_dict[k]
     else:
