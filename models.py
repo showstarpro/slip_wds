@@ -110,6 +110,8 @@ class CLIP(nn.Module):
 
         self.context_length = context_length
         self.vision_width = vision_width
+        self.transformer_width = transformer_width
+        self.num_patch = 196
 
         self.visual = vision_model
 
@@ -122,7 +124,8 @@ class CLIP(nn.Module):
 
         self.vocab_size = vocab_size
         self.token_embedding = nn.Embedding(vocab_size, transformer_width)
-        self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
+        self.positional_embedding_text = nn.Parameter(torch.empty(self.context_length, transformer_width))
+        self.positional_embedding_img = nn.Parameter(torch.empty(self.num_patch, vision_width))
         self.ln_final = LayerNorm(transformer_width)
 
         self.image_projection = nn.Parameter(torch.empty(vision_width, embed_dim))
@@ -133,7 +136,8 @@ class CLIP(nn.Module):
 
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
-        nn.init.normal_(self.positional_embedding, std=0.01)
+        nn.init.normal_(self.positional_embedding_text, std=0.01)
+        nn.init.normal_(self.positional_embedding_img, std=0.01)
 
         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
         attn_std = self.transformer.width ** -0.5
@@ -164,7 +168,7 @@ class CLIP(nn.Module):
 
     def encode_text(self, text):
         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
-        x = x + self.positional_embedding
+        x = x + self.positional_embedding_text
         x = x.permute(1, 0, 2)  # NLD -> LND
         x = self.transformer(x)
         x = x.permute(1, 0, 2)  # LND -> NLD
@@ -548,12 +552,6 @@ class MultiTask(CLIP):
         x = torch.einsum('nhwcpq->nchpwq', x)
         x = x.reshape(bsz, C, h * p, w * p)
         return x  # [n, c, h, w]
-    
-    # def encode(self, image):
-    #     x = self.visual(image)
-    #     x = x.last_hidden_state
-    #     x = self.norm(x)
-    #     return x
 
     def forward(self, image, text):
         B, C, H, W = image.shape
@@ -613,6 +611,132 @@ class MultiTask(CLIP):
                 "cap_fq": self.cap_fq,
                 "num_samples": self.num_samples,
                 'logit_scale': self.logit_scale.exp()}
+
+class ConcatMulti(CLIP):
+    def __init__(self,
+                 ssl_mlp_dim: int,
+                 ssl_emb_dim: int,
+                 text_cfg: CLIPTextCfg,
+                 grad_checkpointing=False,
+                 diffloss_d=3,
+                 num_sampling_steps='100',
+                 decoder_embed_dim=512,
+                 quick_gelu: bool = False,
+                 cast_dtype: Optional[torch.dtype] = None,
+                 **kwargs,
+                 ):
+        super().__init__(**kwargs)
+
+        self.image_mlp = self._build_mlp(in_dim=self.vision_width, mlp_dim=ssl_mlp_dim, out_dim=ssl_emb_dim)
+        self.global_token = nn.Parameter(torch.empty(self.vision_width)) ## concat global token
+        self.img_clstoken = nn.Parameter(torch.empty(self.vision_width)) ## image cls token
+        self.train_diffusion = create_diffusion(timestep_respacing="", noise_schedule="cosine")
+        self.token_embed_dim = 768
+        self.decoder = SimpleMLPAdaLN(
+            in_channels=self.token_embed_dim,
+            model_channels=self.vision_width,
+            out_channels=self.vision_width,
+            # z_channels=decoder_embed_dim,
+            num_res_blocks=diffloss_d,
+            grad_checkpointing=grad_checkpointing
+        )
+        self.norm = nn.LayerNorm(self.vision_width)
+        clshead_cfg = ClassHeadCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
+        self.text_decoder = _build_cls_head(
+            width=decoder_embed_dim,
+            clshead_cfg=clshead_cfg,
+            quick_gelu=quick_gelu,
+            cast_dtype=cast_dtype,
+        )
+        self.register_buffer("cap_fq", torch.zeros([1, self.vocab_size], dtype=torch.float64))
+        self.register_buffer("num_samples", torch.zeros([1, 1], dtype=torch.float64))
+        self.init_para()
+    
+    def init_para(self):
+        nn.init.normal_(self.global_token, std=0.01)
+        nn.init.normal_(self.img_clstoken, std=0.01)
+
+    def _build_mlp(self, in_dim, mlp_dim, out_dim):
+        return nn.Sequential(OrderedDict([
+            ("layer1", nn.Linear(in_dim, mlp_dim)),
+            ("bn1", nn.SyncBatchNorm(mlp_dim)),
+            ("relu1", nn.ReLU(inplace=True)),
+            ("layer2", nn.Linear(mlp_dim, mlp_dim)),
+            ("bn2", nn.SyncBatchNorm(mlp_dim)),
+            ("relu2", nn.ReLU(inplace=True)),
+            ("layer3", nn.Linear(mlp_dim, out_dim)),
+        ]))
+
+    def patchify(self, x):
+        bsz, c, h, w = x.shape
+        p = 16
+        h_, w_ = h // p, w // p
+
+        x = x.reshape(bsz, c, h_, p, w_, p)
+        x = torch.einsum('nchpwq->nhwcpq', x)
+        x = x.reshape(bsz, h_ * w_, c * p ** 2)
+        return x  # [n, l, d]
+
+    def forward(self, image, text):
+        B, C, H, W = image.shape
+        ## patchify image and tokenize text
+        img = self.patchify(image)
+        ## add img cls token
+        b, l, d = img.shape
+        img_clstoken = self.img_clstoken.view(1, 1, -1).expand(b, -1, -1)
+        img = torch.cat((img_clstoken, img).to(img.dtype), dim=1)
+        self.num_patch += 1
+        ## text embed TODO:感觉不需要在tokenizer.py的self.cache中加上startofimg?
+        txt1 = self.token_embedding(text) ## original text
+        # txt2 ##TODO:需要调用接口基于图像扩充原始文本吗?
+        ## add positional_embedding
+        img = img + self.positional_embedding_img
+        txt1 = txt1 + self.positional_embedding_text
+        global_token = self.global_token.view(1, 1, -1).expand(b, -1, -1)
+        ## concat global_token + img_token + txt_token
+        x1 = torch.cat((global_token, img, txt1).to(img.dtype), dim=1)
+        ##TODO
+        # x2 = torch.cat((global_token, img, txt2).to(img.dtype), dim=1)
+
+        ## input the same transformer encoder
+        x1 = x1.permute(1, 0, 2)  # BLD -> LBD
+        x1 = self.transformer(x1)
+        x1 = x1.permute(1, 0, 2)  # LBD -> BLD
+        ##TODO
+        # x2 = x2.permute(1, 0, 2)  # BLD -> LBD
+        # x2 = self.transformer(x2)
+        # x2 = x2.permute(1, 0, 2)  # LBD -> BLD
+
+        ## img-txt concat global_token contrastive learning(simclr)
+        glb_t1 = x1[:, 0]   ##TODO:是否需要接img_mlp层?
+        # glb_t2 = x2[:, 0]
+
+        ## img to text (superclass),get img_token TODO:是用img拼接原始text还是合成的text经过encoder后的？
+        img_embed = x1[:, 1] ## img_clstoken
+        img_embed = img_embed @ self.image_projection ## project to dim=512
+
+        ## text autoregressive
+        text_embed = x1[:, self.num_patch + 1:]
+        text_embed = self.ln_final(text_embed)
+        # take features from the eot embedding (eot_token is the highest number in each sequence)
+        text_embed = text_embed[torch.arange(b), text.argmax(dim=-1)] @ self.text_projection ## project to dim=512
+
+        ## add img to text decode
+        imgtxt_tokens = self.text_decoder(img_embed)
+        ##TODO:都使用superclass的text_decoder吗?
+        ## add text autoregressive decode
+        text_tokens = self.text_decoder(text_embed)
+        labels = text.clone()
+
+        return {'glb_t1': glb_t1,
+                'glb_t2': glb_t2,
+                'imgtxt_tokens': imgtxt_tokens,
+                'text_tokens': text_tokens,
+                'labels': labels,
+                "cap_fq": self.cap_fq,
+                "num_samples": self.num_samples,
+                'logit_scale': self.logit_scale.exp()}
+
 
 class LinearModel(nn.Module):
     def __init__(
@@ -721,6 +845,12 @@ def CLIP_VITB16(**kwargs):
     vision_model = model_clip_transformer.vision_model
     model = CLIP(embed_dim=512, vision_width=768, vision_model=vision_model, context_length=77, vocab_size=49408,
         transformer_width=512, transformer_heads=8, transformer_layers=12, **kwargs)
+
+    return model
+
+def ConcatMulti_VITB16(**kwargs):
+    model = ConcatMulti(embed_dim=512, vision_width=768, vision_model=None, context_length=77, vocab_size=49408,
+        transformer_width=768, transformer_heads=8, transformer_layers=12, text_cfg={}, **kwargs)
 
     return model
 
