@@ -555,7 +555,7 @@ class MultiTask(CLIP):
     #     x = self.norm(x)
     #     return x
 
-    def forward(self, image, text, aug):
+    def forward(self, image, text, aug1, aug2):
         B, C, H, W = image.shape
         ## add noise
         img = self.patchify(image)
@@ -573,14 +573,15 @@ class MultiTask(CLIP):
         x_t = self.unpatchify(x_t, C, H, W) # recover shape [B, C, H, W]
 
         img1 = self.visual(x_t) ## with noise
-        img2 = self.visual(aug) ## without noise
+        aug_1 = self.visual(aug1)
+        aug_2 = self.visual(aug2) ## without noise
 
         ## diffusion
         imgnoise_embed = self.norm(img1.last_hidden_state) ## feature with noise
         # image_embed = self.encode(image) ## without noise
         ## simclr
-        aug1_embed = self.image_mlp(img1.pooler_output)
-        aug2_embed = self.image_mlp(img2.pooler_output)
+        aug1_embed = self.image_mlp(aug_1.pooler_output)
+        aug2_embed = self.image_mlp(aug_2.pooler_output)
         ## clip and superclass
         img_embed_p = self.encode_image(image)
         # imgnoise_embed_p = self.encode_image(x_t)
