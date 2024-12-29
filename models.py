@@ -496,18 +496,18 @@ class MultiTask(CLIP):
         super().__init__(**kwargs)
 
         self.image_mlp = self._build_mlp(in_dim=self.vision_width, mlp_dim=ssl_mlp_dim, out_dim=ssl_emb_dim)
-        self.train_diffusion = create_diffusion(timestep_respacing="", noise_schedule="cosine")
+        # self.train_diffusion = create_diffusion(timestep_respacing="", noise_schedule="cosine")
         self.token_embed_dim = 768
-        self.decoder = SimpleMLPAdaLN(
-            in_channels=self.token_embed_dim,
-            model_channels=self.vision_width,
-            out_channels=self.vision_width,
-            # z_channels=decoder_embed_dim,
-            num_res_blocks=diffloss_d,
-            grad_checkpointing=grad_checkpointing
-        )
-        self.norm = nn.LayerNorm(self.vision_width)
-        self.diffusion_batch_mul = 4
+        # self.decoder = SimpleMLPAdaLN(
+        #     in_channels=self.token_embed_dim,
+        #     model_channels=self.vision_width,
+        #     out_channels=self.vision_width,
+        #     # z_channels=decoder_embed_dim,
+        #     num_res_blocks=diffloss_d,
+        #     grad_checkpointing=grad_checkpointing
+        # )
+        # self.norm = nn.LayerNorm(self.vision_width)
+        # self.diffusion_batch_mul = 4
         clshead_cfg = ClassHeadCfg(**text_cfg) if isinstance(text_cfg, dict) else text_cfg
         self.text_decoder = _build_cls_head(
             width=decoder_embed_dim,
