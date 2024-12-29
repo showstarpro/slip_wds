@@ -195,8 +195,8 @@ class MultiTaskLoss(nn.Module):
         self.clip_scale = clip_scale
         self.ssl_loss = ssl_loss
         self.ssl_scale = ssl_scale
-        self.diff_loss = DiffLoss()
-        self.diff_scale = diff_scale
+        # self.diff_loss = DiffLoss()
+        # self.diff_scale = diff_scale
         self.cls_loss = CLSLoss(world_size=1)
         self.cls_scale = cls_scale
 
@@ -209,16 +209,16 @@ class MultiTaskLoss(nn.Module):
         ssl_loss = ssl_loss_dict['ssl_loss']
         ssl_acc = ssl_loss_dict['ssl_acc']
 
-        diff_loss_dict = self.diff_loss(outputs)
-        diff_loss = diff_loss_dict['diff_loss']
+        # diff_loss_dict = self.diff_loss(outputs)
+        # diff_loss = diff_loss_dict['diff_loss']
 
         cls_loss_dict = self.cls_loss(outputs)
         cls_loss = cls_loss_dict['cls_loss']
 
-        return {'loss': self.clip_scale * clip_loss + self.ssl_scale * ssl_loss + self.diff_scale * diff_loss + self.cls_scale * cls_loss,
+        return {'loss': self.clip_scale * clip_loss + self.ssl_scale * ssl_loss + self.cls_scale * cls_loss,
                 'clip_loss': clip_loss,
                 'clip_acc': clip_acc,
                 'ssl_loss': ssl_loss,
                 'ssl_acc': ssl_acc,
-                'diff_loss': diff_loss,
+                # 'diff_loss': diff_loss,
                 'cls_loss': cls_loss}

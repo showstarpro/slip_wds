@@ -556,28 +556,28 @@ class MultiTask(CLIP):
     #     return x
 
     def forward(self, image, text, aug1, aug2):
-        B, C, H, W = image.shape
+        # B, C, H, W = image.shape
         ## add noise
-        img = self.patchify(image)
-        b, l, d = img.shape
-        img = img.reshape(b * l, -1)
-        noise = torch.randn_like(img) # [b*l, d] 
+        # img = self.patchify(image)
+        # b, l, d = img.shape
+        # img = img.reshape(b * l, -1)
+        # noise = torch.randn_like(img) # [b*l, d] 
         ## 不同等级系数
         # alpha = torch.rand(b, l).to(device=noise.device)
         # noise = noise * alpha.unsqueeze(-1)
         # noise = noise.reshape(b, l, -1)
         # noise = self.unpatchify(noise, C, H, W)
-        t = torch.randint(0, self.train_diffusion.num_timesteps, (img.shape[0],), device=img.device) # [b*l]
-        x_t = self.train_diffusion.q_sample(img, t, noise) # [b*l, d]
-        x_t = x_t.reshape(b, l, -1)
-        x_t = self.unpatchify(x_t, C, H, W) # recover shape [B, C, H, W]
+        # t = torch.randint(0, self.train_diffusion.num_timesteps, (img.shape[0],), device=img.device) # [b*l]
+        # x_t = self.train_diffusion.q_sample(img, t, noise) # [b*l, d]
+        # x_t = x_t.reshape(b, l, -1)
+        # x_t = self.unpatchify(x_t, C, H, W) # recover shape [B, C, H, W]
 
-        img1 = self.visual(x_t) ## with noise
+        # img1 = self.visual(x_t) ## with noise
         aug_1 = self.visual(aug1)
         aug_2 = self.visual(aug2) ## without noise
 
         ## diffusion
-        imgnoise_embed = self.norm(img1.last_hidden_state) ## feature with noise
+        # imgnoise_embed = self.norm(img1.last_hidden_state) ## feature with noise
         # image_embed = self.encode(image) ## without noise
         ## simclr
         aug1_embed = self.image_mlp(aug_1.pooler_output)
@@ -588,13 +588,13 @@ class MultiTask(CLIP):
         text_embed = self.encode_text(text)
 
         ## add mar mlp as decoder, reshape操作参考mar code
-        B, L, _ = imgnoise_embed[:, 1:].shape
-        n_imgnoise_embed = imgnoise_embed[:, 1:].reshape(B * L, -1)
+        # B, L, _ = imgnoise_embed[:, 1:].shape
+        # n_imgnoise_embed = imgnoise_embed[:, 1:].reshape(B * L, -1)
         # n_image_embed = image_embed[:, 1:].reshape(B * L, -1)
         # n_t = torch.randint(0, self.train_diffusion.num_timesteps, (n_image_embed.shape[0],), device=n_image_embed.device)
         # model_kwargs = dict(c=None) ## none
         # alpha = alpha.reshape(B * L, -1).squeeze(-1)
-        rec_noise = self.decoder(n_imgnoise_embed, t) ## recover noise
+        # rec_noise = self.decoder(n_imgnoise_embed, t) ## recover noise
         # noise = self.patchify(noise)
         # B, L, _ = noise.shape
         # noise = noise.reshape(B * L, -1)
@@ -607,8 +607,8 @@ class MultiTask(CLIP):
                 'aug2_embed': aug2_embed,
                 'img_embed_p': img_embed_p,
                 'text_embed': text_embed,
-                'noise': noise,
-                'rec_noise': rec_noise,
+                # 'noise': noise,
+                # 'rec_noise': rec_noise,
                 'text_tokens': text_tokens,
                 'labels': labels,
                 "cap_fq": self.cap_fq,
