@@ -686,7 +686,7 @@ class MLIP(CLIP):
         torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
 
         # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
-        torch.nn.init.normal_(self.global_token, std=.02)
+        # torch.nn.init.normal_(self.global_token, std=.02)
         torch.nn.init.normal_(self.cls_token, std=.02)
         torch.nn.init.normal_(self.mask_token, std=.02)
 
@@ -773,15 +773,23 @@ class MLIP(CLIP):
         ## ----- operate on texts -----
         y = self.token_embedding(text) ## dim=2 is 512
         y = y + self.positional_embedding
-        ## concat glb_token,soi,x,eoi,y
-        glb_token = self.global_token.expand(x.shape[0], -1, -1)
-        
-        ## apply Transformer blocks for images(x) & texts(y)
-        for blk in self.blocks:
-            x = blk(x)
-        x = self.norm(x)
+        ## concat soi,x,eoi,y to z
+        # glb_token = self.global_token.expand(x.shape[0], -1, -1)
+        soi_token = self.token_embedding(self.soi_token).view(1, 1, -1).expand(x.shape[0], -1, -1)
+        eoi_token = self.token_embedding(self.eoi_token).view(1, 1, -1).expand(x.shape[0], -1, -1)
+        z = torch.cat((soi_token, x, eoi_token, y).to(x.dtype), dim=1)
+        ## apply Transformer blocks for concat z, use clip's self.transformer
+        z = z.permute(1, 0, 2) # BLD -> LBD
+        z = self.transformer(z)
+        z = z.permute(1, 0, 2) # LBD -> BLD
+        # for blk in self.blocks:
+        #     x = blk(x)
+        z = self.norm(z)
+        ## get img_embed & text_embed
+        img_embed = z[:, 1:self.patch_embed.num_patches+1]
+        text_embed = z[:, self.patch_embed.num_patches+2]
 
-        return x, text_embed, mask, ids_restore
+        return img_embed, text_embed, mask, ids_restore
 
     def forward_decoder(self, x, ids_restore):
         # embed tokens
