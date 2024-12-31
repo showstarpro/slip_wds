@@ -20,6 +20,7 @@ from auxilary import MultiheadAttention
 from diffusion import create_diffusion, gaussian_diffusion
 from timm.models.vision_transformer import PatchEmbed, Block
 from pos_embed import get_2d_sincos_pos_embed
+from tokenizer import SimpleTokenizer
 from cls_model.transformer import (
     LayerNormFp32,
     LayerNorm,
@@ -644,6 +645,10 @@ class MLIP(CLIP):
                  decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
                  mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False):
         super().__init__()
+        self.tokenizer = SimpleTokenizer()
+        self.global_token = nn.Parameter(torch.zeros(1, 1, embed_dim)) ## concat global token
+        self.soi_token = self.tokenizer("<|startofimg|>")[1] ## start of image
+        self.eoi_token = self.tokenizer("<|endofimg|>")[1] ## end of image
         # MAE encoder specifics
         self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, embed_dim)
         num_patches = self.patch_embed.num_patches
@@ -681,6 +686,7 @@ class MLIP(CLIP):
         torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
 
         # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
+        torch.nn.init.normal_(self.global_token, std=.02)
         torch.nn.init.normal_(self.cls_token, std=.02)
         torch.nn.init.normal_(self.mask_token, std=.02)
 
@@ -753,7 +759,7 @@ class MLIP(CLIP):
         return x_masked, mask, ids_restore
     
     def forward_encoder(self, image, text, mask_ratio):
-        ## -----operate on images-----
+        ## ----- operate on images -----
         # embed patches
         x = self.patch_embed(image) ## dim=2 change to 512
         # add pos embed w/o cls token
@@ -764,8 +770,13 @@ class MLIP(CLIP):
         cls_token = self.cls_token + self.pos_embed[:, :1, :]
         cls_tokens = cls_token.expand(x.shape[0], -1, -1)
         x = torch.cat((cls_tokens, x), dim=1)
+        ## ----- operate on texts -----
+        y = self.token_embedding(text) ## dim=2 is 512
+        y = y + self.positional_embedding
+        ## concat glb_token,soi,x,eoi,y
+        glb_token = self.global_token.expand(x.shape[0], -1, -1)
         
-        # apply Transformer blocks for images(x) & texts(y)
+        ## apply Transformer blocks for images(x) & texts(y)
         for blk in self.blocks:
             x = blk(x)
         x = self.norm(x)
