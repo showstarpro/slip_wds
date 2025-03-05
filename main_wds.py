@@ -130,6 +130,10 @@ def get_args_parser():
                         help='loss scale for Diffusion objective')
     parser.add_argument('--cls-scale', default=1.0, type=float,
                         help='loss scale for Superclass objective')
+    parser.add_argument('--mae-scale', default=1.0, type=float,
+                        help='loss scale for MAE objective')
+    parser.add_argument('--ar-scale', default=1.0, type=float,
+                        help='loss scale for AR objective')
     parser.add_argument('--ssl-temp', default=0.1, type=float,
                         help='softmax temperature for SimCLR objective')
     parser.add_argument('--resume', default='', type=str, help='path to resume from')
@@ -185,14 +189,15 @@ def main(args):
 
     # create model
     print("=> creating model: {}".format(args.model))
-    model = getattr(models, args.model)(ssl_mlp_dim=args.ssl_mlp_dim, ssl_emb_dim=args.ssl_emb_dim)
+    model = getattr(models, args.model)()
     model.cuda(args.gpu)
 
     if args.distributed:
         model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], bucket_cap_mb=200)
 
     # define loss function (criterion) and optimizer
-    criterion = models.get_loss(args.model, args.ssl_temp, args.clip_scale, args.ssl_scale, args.diff_scale, args.cls_scale).cuda(args.gpu)
+    # criterion = models.get_loss(args.model, args.ssl_temp, args.clip_scale, args.ssl_scale, args.diff_scale, args.cls_scale).cuda(args.gpu)
+    criterion = models.get_loss(args.model, args.mae_scale, args.ar_scale).cuda(args.gpu)
 
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():
@@ -266,18 +271,18 @@ def main(args):
         tokenizer=tokenizer,
     )
 
-    val_loader = data['imagenet-val'].dataloader
+    # val_loader = data['imagenet-val'].dataloader
 
-    if args.evaluate:
-        if args.model.startswith('SIMCLR'):
-            print('zero-shot evaluation not supported with ssl-only model.')
-            return
+    # if args.evaluate:
+    #     if args.model.startswith('SIMCLR'):
+    #         print('zero-shot evaluation not supported with ssl-only model.')
+    #         return
 
-        zero_stats = validate_zeroshot(val_loader, model, tokenizer, args)
-        if utils.is_main_process():
-            with open(os.path.join(args.output_dir, 'eval_log.txt'), 'a') as f:
-                f.write(json.dumps(zero_stats) + '\n')
-        return
+    #     zero_stats = validate_zeroshot(val_loader, model, tokenizer, args)
+    #     if utils.is_main_process():
+    #         with open(os.path.join(args.output_dir, 'eval_log.txt'), 'a') as f:
+    #             f.write(json.dumps(zero_stats) + '\n')
+    #     return
 
     niter_per_ep = (data["train"].dataloader.num_batches // args.update_freq)
     lr_schedule = utils.cosine_scheduler(args.lr, args.lr_end, args.epochs,
@@ -300,15 +305,15 @@ def main(args):
         if (epoch + 1) % args.eval_freq != 0:
             continue
 
-        if args.model.startswith('SIMCLR'):
-            val_stats = {'acc1': -1}
-            acc1 = -1
-        else:
-            val_stats = validate_zeroshot(val_loader, model, tokenizer, args)
-            acc1 = val_stats['acc1']
+        # if args.model.startswith('SIMCLR'):
+        #     val_stats = {'acc1': -1}
+        #     acc1 = -1
+        # else:
+        #     val_stats = validate_zeroshot(val_loader, model, tokenizer, args)
+        #     acc1 = val_stats['acc1']
 
-        is_best = acc1 > best_acc1
-        best_acc1 = max(acc1, best_acc1)
+        # is_best = acc1 > best_acc1
+        # best_acc1 = max(acc1, best_acc1)
 
         print("=> saving checkpoint")
         utils.save_on_master({
@@ -316,12 +321,12 @@ def main(args):
                 'state_dict': model.state_dict(),
                 'optimizer' : optimizer.state_dict(),
                 'scaler': scaler.state_dict(),
-                'best_acc1': best_acc1,
+                # 'best_acc1': best_acc1,
                 'args': args,
-            }, is_best, args.output_dir)
+            }, True, args.output_dir)
 
         log_stats = {**{f'train_{k}': v for k, v in train_stats.items()},
-                     **{f'test_{k}': v for k, v in val_stats.items()},
+                    #  **{f'test_{k}': v for k, v in val_stats.items()},
                      'epoch': epoch}
 
         if utils.is_main_process():
@@ -382,11 +387,11 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, lr_schedule,
         model.zero_grad(set_to_none=True)
 
         # clamp logit scale to [0, 100]
-        if args.model.startswith('SIMCLR'):
-            logit_scale = 0
-        else:
-            utils.get_model(model).logit_scale.data.clamp_(0, 4.6052)
-            logit_scale = utils.get_model(model).logit_scale.exp().item()
+        # if args.model.startswith('SIMCLR'):
+        #     logit_scale = 0
+        # else:
+        #     utils.get_model(model).logit_scale.data.clamp_(0, 4.6052)
+        #     logit_scale = utils.get_model(model).logit_scale.exp().item()
 
         for k in loss_dict:
             metrics[k].update(loss_dict[k].item(), args.batch_size)
@@ -400,14 +405,14 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, lr_schedule,
         if optim_iter % args.print_freq == 0:
             if utils.is_main_process() and args.wandb:
                 wandb.log({**{k: v.item() for k, v in loss_dict.items()},
-                        'scaler': scaler.get_scale(),
-                        'logit': logit_scale})
+                        'scaler': scaler.get_scale()})
+                        # 'logit': logit_scale})
             progress.display(optim_iter)
 
     progress.synchronize()
     return {**{k: v.avg for k, v in metrics.items()},
-            'lr': optimizer.param_groups[0]['lr'],
-            'logit_scale': logit_scale}
+            'lr': optimizer.param_groups[0]['lr']}
+            # 'logit_scale': logit_scale}
 
 
 def validate_zeroshot(val_loader, model, tokenizer, args):

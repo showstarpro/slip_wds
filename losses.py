@@ -222,3 +222,17 @@ class MultiTaskLoss(nn.Module):
                 'ssl_acc': ssl_acc,
                 'diff_loss': diff_loss,
                 'cls_loss': cls_loss}
+
+class MLIPLoss(nn.Module):
+    def __init__(self, mae_scale, ar_scale):
+        super().__init__()
+        self.mae_scale = mae_scale
+        self.ar_scale = ar_scale
+
+    def forward(self, outputs):
+        mae_loss = outputs['mae_loss']
+        ar_loss = outputs['ar_loss']
+
+        return {'loss': self.mae_scale * mae_loss + self.ar_scale * ar_loss,
+                'mae_loss': mae_loss,
+                'ar_loss': ar_loss}
