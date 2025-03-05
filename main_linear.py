@@ -24,7 +24,7 @@ import torchvision.transforms as transforms
 
 import datasets
 import utils
-from models import LinearModel_VITB16
+from models import LinearModel_VITB16, Linear_MME
 
 def get_args_parser():
     parser = argparse.ArgumentParser(description='Linear probe evaluation', add_help=False)
@@ -118,11 +118,11 @@ def main(args):
     # create model
     print("=> creating model '{}'".format(args.arch))
     # model = timm.models.create_model(args.arch, num_classes=1000)
-    model = LinearModel_VITB16(num_classes=1000)
+    model = Linear_MME(num_classes=1000)
 
     args.start_epoch = 0
     msg = model.load_state_dict(state_dict, strict=False)
-    # assert set(msg.missing_keys) == {"%s.weight" % linear_keyword, "%s.bias" % linear_keyword}
+    assert set(msg.missing_keys) == {"%s.weight" % linear_keyword, "%s.bias" % linear_keyword}
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():

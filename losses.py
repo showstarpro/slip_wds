@@ -236,3 +236,20 @@ class MLIPLoss(nn.Module):
         return {'loss': self.mae_scale * mae_loss + self.ar_scale * ar_loss,
                 'mae_loss': mae_loss,
                 'ar_loss': ar_loss}
+    
+class MACLLoss(nn.Module):
+    def __init__(self, mae_scale, ar_scale, cl_scale):
+        super().__init__()
+        self.mae_scale = mae_scale
+        self.ar_scale = ar_scale
+        self.cl_scale = cl_scale
+
+    def forward(self, outputs):
+        mae_loss = outputs['mae_loss']
+        ar_loss = outputs['ar_loss']
+        cl_loss = outputs['cl_loss']
+
+        return {'loss': self.mae_scale * mae_loss + self.ar_scale * ar_loss + self.cl_scale * cl_loss,
+                'mae_loss': mae_loss,
+                'ar_loss': ar_loss,
+                'cl_loss': cl_loss}

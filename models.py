@@ -643,6 +643,310 @@ class LinearModel(nn.Module):
 
         return output
 
+## MME linear_probe
+class LinearMlip(nn.Module):
+    def __init__(
+        self,
+        model,
+        num_classes=1000,
+    ):
+        super().__init__()
+        self.encoder = model
+        self.num_classes = num_classes
+        self.vision_width = model.width
+        self.cls_token = nn.Parameter(torch.randn(self.vision_width))
+        self.pos_embed = nn.Parameter(torch.zeros(1, 196 + 1, self.embed_dim), requires_grad=False)
+        self.norm = nn.LayerNorm(self.vision_width)
+        self.head_drop = nn.Dropout(0.)
+        self.head = nn.Linear(self.vision_width, self.num_classes)
+
+    def patchify(self, x):
+        bsz, c, h, w = x.shape
+        p = 16
+        h_, w_ = h // p, w // p
+
+        x = x.reshape(bsz, c, h_, p, w_, p)
+        x = torch.einsum('nchpwq->nhwcpq', x)
+        x = x.reshape(bsz, h_ * w_, c * p ** 2)
+        return x  # [n, l, d]
+    
+    def attention_mask(self):
+        # lazily create causal attention mask, with full attention between the vision tokens
+        # pytorch uses additive attention mask; fill with -inf
+        mask = torch.zeros(197, 197)
+        
+        return mask
+
+    def forward(self, image):
+        bsz, c, h, w = image.shape
+        x = self.patchify(image)
+        x = x + self.pos_embed[:, 1:, :]
+        cls_tokens = self.cls_token.to(x.device).expand(bsz, 1, -1)
+        x = torch.cat([cls_tokens, x], dim=1)
+        x = x.permute(1, 0, 2) # BLD -> LBD
+        x = self.encoder(x, attn_mask=self.attention_mask())
+        x = x.permute(1, 0, 2) # LBD -> BLD
+        x = x[:, 0, :] # cls_token
+        x = self.norm(x)
+        x = self.head_drop(x)
+        output = self.head(x)
+
+        return output
+
+## mae + ar + cl loss MME
+class MACL(CLIP):
+    def __init__(self, img_size=224, patch_size=16, in_chans=3,
+                #  embed_dim=1024, 
+                 depth=24, num_heads=16,
+                 decoder_embed_dim=512, decoder_depth=8, decoder_num_heads=16,
+                 mlp_ratio=4., norm_layer=nn.LayerNorm, norm_pix_loss=False, **kwargs,):
+        super().__init__(**kwargs)
+        self.tokenizer = SimpleTokenizer()
+        # self.global_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim)) ## concat global token
+        self.soi_token = self.tokenizer("<|startofimg|>")[1] ## start of image
+        self.eoi_token = self.tokenizer("<|endofimg|>")[1] ## end of image
+        self.eot_token = self.tokenizer(["<|endoftext|>"])[1]
+        # MAE encoder specifics
+        self.patch_embed = PatchEmbed(img_size, patch_size, in_chans, self.embed_dim)
+        num_patches = self.patch_embed.num_patches
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.embed_dim))
+        self.pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, self.embed_dim), requires_grad=False)  # fixed sin-cos embedding
+        # self.blocks = nn.ModuleList([
+        #     Block(self.embed_dim, num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
+        #     for i in range(depth)])
+        self.norm = norm_layer(self.embed_dim)
+
+        # MAE decoder specifics
+        self.decoder_embed = nn.Linear(self.embed_dim, decoder_embed_dim, bias=True)
+        self.mask_token = nn.Parameter(torch.zeros(1, 1, decoder_embed_dim))
+        self.decoder_pos_embed = nn.Parameter(torch.zeros(1, num_patches + 1, decoder_embed_dim), requires_grad=False)  # fixed sin-cos embedding
+        self.decoder_blocks = nn.ModuleList([
+            Block(decoder_embed_dim, decoder_num_heads, mlp_ratio, qkv_bias=True, norm_layer=norm_layer)
+            for i in range(decoder_depth)])
+        self.decoder_norm = norm_layer(decoder_embed_dim)
+        self.decoder_pred = nn.Linear(decoder_embed_dim, patch_size**2 * in_chans, bias=True) # decoder to patch
+    
+        self.norm_pix_loss = norm_pix_loss
+
+
+        ### text-decoder: MLp
+        self.text_decoder = nn.Linear(self.embed_dim, self.tokenizer.vocab_size, bias=True)
+        self.initialize_weights()
+
+        ## for CL loss
+        self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+    def initialize_weights(self):
+        # initialization
+        # initialize (and freeze) pos_embed by sin-cos embedding
+        pos_embed = get_2d_sincos_pos_embed(self.pos_embed.shape[-1], int(self.patch_embed.num_patches**.5), cls_token=True)
+        self.pos_embed.data.copy_(torch.from_numpy(pos_embed).float().unsqueeze(0))
+
+        decoder_pos_embed = get_2d_sincos_pos_embed(self.decoder_pos_embed.shape[-1], int(self.patch_embed.num_patches**.5), cls_token=True)
+        self.decoder_pos_embed.data.copy_(torch.from_numpy(decoder_pos_embed).float().unsqueeze(0))
+
+        # initialize patch_embed like nn.Linear (instead of nn.Conv2d)
+        w = self.patch_embed.proj.weight.data
+        torch.nn.init.xavier_uniform_(w.view([w.shape[0], -1]))
+
+        # timm's trunc_normal_(std=.02) is effectively normal_(std=0.02) as cutoff is too big (2.)
+        # torch.nn.init.normal_(self.global_token, std=.02)
+        torch.nn.init.normal_(self.cls_token, std=.02)
+        torch.nn.init.normal_(self.mask_token, std=.02)
+
+        # initialize nn.Linear and nn.LayerNorm
+        self.apply(self._init_weights)
+
+    def _init_weights(self, m):
+        if isinstance(m, nn.Linear):
+            # we use xavier_uniform following official JAX ViT:
+            torch.nn.init.xavier_uniform_(m.weight)
+            if isinstance(m, nn.Linear) and m.bias is not None:
+                nn.init.constant_(m.bias, 0)
+        elif isinstance(m, nn.LayerNorm):
+            nn.init.constant_(m.bias, 0)
+            nn.init.constant_(m.weight, 1.0)
+    
+    def patchify(self, imgs):
+        """
+        imgs: (N, 3, H, W)
+        x: (N, L, patch_size**2 *3)
+        """
+        p = self.patch_embed.patch_size[0]
+        assert imgs.shape[2] == imgs.shape[3] and imgs.shape[2] % p == 0
+
+        h = w = imgs.shape[2] // p
+        x = imgs.reshape(shape=(imgs.shape[0], 3, h, p, w, p))
+        x = torch.einsum('nchpwq->nhwpqc', x)
+        x = x.reshape(shape=(imgs.shape[0], h * w, p**2 * 3))
+        return x
+
+    def unpatchify(self, x):
+        """
+        x: (N, L, patch_size**2 *3)
+        imgs: (N, 3, H, W)
+        """
+        p = self.patch_embed.patch_size[0]
+        h = w = int(x.shape[1]**.5)
+        assert h * w == x.shape[1]
+        
+        x = x.reshape(shape=(x.shape[0], h, w, p, p, 3))
+        x = torch.einsum('nhwpqc->nchpwq', x)
+        imgs = x.reshape(shape=(x.shape[0], 3, h * p, h * p))
+        return imgs
+
+    def random_masking(self, x, mask_ratio):
+        """
+        Perform per-sample random masking by per-sample shuffling.
+        Per-sample shuffling is done by argsort random noise.
+        x: [N, L, D], sequence
+        """
+        N, L, D = x.shape  # batch, length, dim
+        len_keep = int(L * (1 - mask_ratio))
+        
+        noise = torch.rand(N, L, device=x.device)  # noise in [0, 1]
+        
+        # sort noise for each sample
+        ids_shuffle = torch.argsort(noise, dim=1)  # ascend: small is keep, large is remove
+        ids_restore = torch.argsort(ids_shuffle, dim=1)
+
+        # keep the first subset
+        ids_keep = ids_shuffle[:, :len_keep]
+        x_masked = torch.gather(x, dim=1, index=ids_keep.unsqueeze(-1).repeat(1, 1, D))
+
+        # generate the binary mask: 0 is keep, 1 is remove
+        mask = torch.ones([N, L], device=x.device)
+        mask[:, :len_keep] = 0
+        # unshuffle to get the binary mask
+        mask = torch.gather(mask, dim=1, index=ids_restore)
+
+        return x_masked, mask, ids_restore
+    
+    def forward_encoder(self, image, text, mask_ratio=0):
+        ## ----- operate on images -----
+        # embed patches
+        x = self.patch_embed(image) ## dim=2 change to 512=text_embeddim
+        # add pos embed w/o cls token,soi,eoi
+        x = x + self.pos_embed[:, 1:, :]
+        # masking: length -> length * mask_ratio
+        if mask_ratio > 0:
+            x, mask, ids_restore = self.random_masking(x, mask_ratio)
+        # append cls token, soi token, eoi token
+        cls_token = self.cls_token + self.pos_embed[:, :1, :]
+        soi_token = self.token_embedding(self.soi_token.to(x.device)).view(1, 1, -1)
+        eoi_token = self.token_embedding(self.eoi_token.to(x.device)).view(1, 1, -1)
+        cls_tokens = cls_token.expand(x.shape[0], -1, -1)
+        soi_tokens = soi_token.expand(x.shape[0], -1, -1)
+        eoi_tokens = eoi_token.expand(x.shape[0], -1, -1)
+        x = torch.cat((soi_tokens, cls_tokens, x, eoi_tokens), dim=1)
+        ## ----- operate on texts -----
+        y = self.token_embedding(text)
+        y = y + self.positional_embedding
+        ## concat x + y to z
+        # glb_token = self.global_token.expand(x.shape[0], -1, -1)
+        z = torch.cat((x, y), dim=1)
+        ## apply Transformer blocks for concat z, use clip's self.transformer
+        z = z.permute(1, 0, 2) # BLD -> LBD
+        z = self.transformer(z)  ## attention_mask is None, dul attention
+        z = z.permute(1, 0, 2) # LBD -> BLD
+        # for blk in self.blocks:
+        #     x = blk(x)
+        z = self.norm(z)
+        ## get img_latent & img_embed & text_embed
+        img_latent = z[:, 1:x.shape[1]-1] ## no soi, eoi token, with cls token 
+        y = z[:, x.shape[1]:] ## text token
+        # img_embed = img_latent[:, :1] @ self.image_projection # cls_token
+        #text_embed = y[torch.arange(y.shape[0]), text.argmax(dim=-1)] @ self.text_projection # text_token, DO!!!!!
+        text_embed = y ## cls token
+
+        ## CL loss
+        img_embed = z[:, 1]
+        txt_embed = y[torch.arange(y.shape[0]), text.argmax(dim=-1)]
+
+        return img_latent, text_embed, mask, ids_restore, img_embed, txt_embed
+
+            
+    def forward_decoder(self, x, ids_restore):
+        # embed tokens
+        x = self.decoder_embed(x)
+
+        # append mask tokens to sequence
+        mask_tokens = self.mask_token.repeat(x.shape[0], ids_restore.shape[1] + 1 - x.shape[1], 1)
+        x_ = torch.cat([x[:, 1:, :], mask_tokens], dim=1)  # no cls token
+        x_ = torch.gather(x_, dim=1, index=ids_restore.unsqueeze(-1).repeat(1, 1, x.shape[2]))  # unshuffle
+        x = torch.cat([x[:, :1, :], x_], dim=1)  # append cls token
+
+        # add pos embed
+        x = x + self.decoder_pos_embed
+
+        # apply Transformer blocks
+        for blk in self.decoder_blocks:
+            x = blk(x)
+        x = self.decoder_norm(x)
+
+        # predictor projection
+        x = self.decoder_pred(x)
+
+        # remove cls token
+        x = x[:, 1:, :]
+
+        return x
+
+    def forward_img_loss(self, imgs, pred, mask):
+        """
+        imgs: [N, 3, H, W]
+        pred: [N, L, p*p*3]
+        mask: [N, L], 0 is keep, 1 is remove, 
+        """
+        target = self.patchify(imgs)
+        if self.norm_pix_loss:
+            mean = target.mean(dim=-1, keepdim=True)
+            var = target.var(dim=-1, keepdim=True)
+            target = (target - mean) / (var + 1.e-6)**.5
+
+        loss = (pred - target) ** 2
+        loss = loss.mean(dim=-1)  # [N, L], mean loss per patch
+
+        loss = (loss * mask).sum() / mask.sum()  # mean loss on removed patches
+        return loss
+
+    def forward_text_loss(self, text_embed, text_tokens):
+        """
+        text_embed: [N, D]
+        text_tokens: [N]
+        """
+        logits = self.text_decoder(text_embed)
+        B, T, C = logits.shape
+        logits = logits.view(B*T, C)
+        text_tokens = text_tokens.view(B*T)
+        loss = F.cross_entropy(logits, text_tokens)
+        return loss
+
+    def forward_cl_loss(self, img_embed, txt_embed):
+        logit_scale = self.logit_scale.exp()
+        img_embed = F.normalize(img_embed, dim=-1, p=2)
+        txt_embed = F.normalize(txt_embed, dim=-1, p=2)
+        batch_size = img_embed.size(0)
+        labels = torch.arange(batch_size).cuda()
+        # cosine similarity as logits
+        logits_per_image = logit_scale * img_embed @ txt_embed.t()
+        logits_per_text = logit_scale * txt_embed @ img_embed.t()
+        loss = (F.cross_entropy(logits_per_image, labels) + \
+            F.cross_entropy(logits_per_text, labels)) / 2
+        return loss
+
+    def forward(self, imgs, texts, mask_ratio=0.75):
+        img_latent, text_embed, mask, ids_restore, img_embed, txt_embed= self.forward_encoder(imgs, texts, mask_ratio)
+        pred_img = self.forward_decoder(img_latent, ids_restore)  # [N, L, p*p*3]
+        mae_loss = self.forward_img_loss(imgs, pred_img, mask)
+        eot = self.eot_token.repeat(texts.shape[0], 1).to(imgs.device)
+        target_text = torch.cat([texts[:, 1:], eot], dim=1)
+        ar_loss = self.forward_text_loss(text_embed, target_text)
+        cl_loss = self.forward_cl_loss(img_embed, txt_embed)
+        return {'mae_loss': mae_loss,
+                'ar_loss': ar_loss,
+                'cl_loss': cl_loss}
+
 class MLIP(CLIP):
     def __init__(self, img_size=224, patch_size=16, in_chans=3,
                 #  embed_dim=1024, 
@@ -909,9 +1213,11 @@ config = CLIPConfig(
     #     return losses.CLIPLoss()
     # if model.startswith('SIMCLR'):
     #     return losses.SIMCLRLoss(temperature=ssl_temp)
-def get_loss(model, mae_scale, ar_scale):
+def get_loss(model, mae_scale, ar_scale, cl_scale):
     if model.startswith('MLIP'):
         return losses.MLIPLoss(mae_scale, ar_scale)
+    if model.startswith('MACL'):
+        return losses.MACLLoss(mae_scale, ar_scale, cl_scale)
 
 
 def get_metric_names(model):
@@ -923,6 +1229,8 @@ def get_metric_names(model):
         return ['loss', 'clip_loss', 'ssl_loss', 'diff_loss', 'cls_loss', 'clip_acc', 'ssl_acc']
     elif model.startswith('MLIP'):
         return ['loss', 'mae_loss', 'ar_loss']
+    elif model.startswith('MACL'):
+        return ['loss', 'mae_loss', 'ar_loss', 'cl_loss']
     else:
         return ['loss', 'ssl_loss', 'ssl_acc']
 
@@ -976,8 +1284,14 @@ def MultiTask_VITB16(**kwargs):
 
     return model
 
-def MLIP_VITB16(**kwargs):
+def MLIP_MME(**kwargs):
     model = MLIP(embed_dim=768, vision_width=768, vision_model=None, context_length=77, vocab_size=49410,
+        transformer_width=768, transformer_heads=8, transformer_layers=12, text_cfg={}, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+
+    return model
+
+def MACL_MME(**kwargs):
+    model = MACL(embed_dim=768, vision_width=768, vision_model=None, context_length=77, vocab_size=49410,
         transformer_width=768, transformer_heads=8, transformer_layers=12, text_cfg={}, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
 
     return model
@@ -986,6 +1300,14 @@ def LinearModel_VITB16(**kwargs):
     model_clip_transformer = CLIPModel(config)
     vision_model = model_clip_transformer.vision_model
     model = LinearModel(model=vision_model, **kwargs)
+
+    return model
+
+def Linear_MME(**kwargs):
+    model_mlip = MLIP(embed_dim=768, vision_width=768, vision_model=None, context_length=77, vocab_size=49410,
+        transformer_width=768, transformer_heads=8, transformer_layers=12, text_cfg={}, norm_layer=partial(nn.LayerNorm, eps=1e-6), **kwargs)
+    mme = model_mlip.transformer
+    model = LinearMlip(model=mme, **kwargs)
 
     return model
 

@@ -134,6 +134,8 @@ def get_args_parser():
                         help='loss scale for MAE objective')
     parser.add_argument('--ar-scale', default=1.0, type=float,
                         help='loss scale for AR objective')
+    parser.add_argument('--cl-scale', default=1.0, type=float,
+                        help='loss scale for CL objective')
     parser.add_argument('--ssl-temp', default=0.1, type=float,
                         help='softmax temperature for SimCLR objective')
     parser.add_argument('--resume', default='', type=str, help='path to resume from')
@@ -197,7 +199,7 @@ def main(args):
 
     # define loss function (criterion) and optimizer
     # criterion = models.get_loss(args.model, args.ssl_temp, args.clip_scale, args.ssl_scale, args.diff_scale, args.cls_scale).cuda(args.gpu)
-    criterion = models.get_loss(args.model, args.mae_scale, args.ar_scale).cuda(args.gpu)
+    criterion = models.get_loss(args.model, args.mae_scale, args.ar_scale, args.cl_scale).cuda(args.gpu)
 
     p_wd, p_non_wd = [], []
     for n, p in model.named_parameters():
@@ -387,11 +389,11 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, lr_schedule,
         model.zero_grad(set_to_none=True)
 
         # clamp logit scale to [0, 100]
-        # if args.model.startswith('SIMCLR'):
-        #     logit_scale = 0
-        # else:
-        #     utils.get_model(model).logit_scale.data.clamp_(0, 4.6052)
-        #     logit_scale = utils.get_model(model).logit_scale.exp().item()
+        if args.model.startswith('MLIP'):
+            logit_scale = 0
+        else:
+            utils.get_model(model).logit_scale.data.clamp_(0, 4.6052)
+            logit_scale = utils.get_model(model).logit_scale.exp().item()
 
         for k in loss_dict:
             metrics[k].update(loss_dict[k].item(), args.batch_size)
@@ -405,14 +407,14 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, lr_schedule,
         if optim_iter % args.print_freq == 0:
             if utils.is_main_process() and args.wandb:
                 wandb.log({**{k: v.item() for k, v in loss_dict.items()},
-                        'scaler': scaler.get_scale()})
-                        # 'logit': logit_scale})
+                        'scaler': scaler.get_scale(),
+                        'logit': logit_scale})
             progress.display(optim_iter)
 
     progress.synchronize()
     return {**{k: v.avg for k, v in metrics.items()},
-            'lr': optimizer.param_groups[0]['lr']}
-            # 'logit_scale': logit_scale}
+            'lr': optimizer.param_groups[0]['lr'],
+            'logit_scale': logit_scale}
 
 
 def validate_zeroshot(val_loader, model, tokenizer, args):
