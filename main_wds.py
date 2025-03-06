@@ -195,7 +195,7 @@ def main(args):
     model.cuda(args.gpu)
 
     if args.distributed:
-        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], bucket_cap_mb=200)
+        model = torch.nn.parallel.DistributedDataParallel(model, device_ids=[args.gpu], bucket_cap_mb=200, find_unused_parameters=True)
 
     # define loss function (criterion) and optimizer
     # criterion = models.get_loss(args.model, args.ssl_temp, args.clip_scale, args.ssl_scale, args.diff_scale, args.cls_scale).cuda(args.gpu)
