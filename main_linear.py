@@ -360,6 +360,7 @@ def validate(val_loader, model, criterion, args):
 
 
 def save_checkpoint(state, is_best, output_dir):
+    os.makedirs(output_dir, exist_ok=True)
     ckpt_path = f'{output_dir}/linear_checkpoint.pt'
     best_path = f'{output_dir}/linear_best.pt'
     torch.save(state, ckpt_path)
