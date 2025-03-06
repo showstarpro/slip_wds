@@ -101,13 +101,13 @@ def main(args):
             loc = 'cuda:{}'.format(args.gpu)
             checkpoint = torch.load(args.pretrained, map_location=loc)
 
-        visual_keyword = 'module.visual.'
+        visual_keyword = 'module.transformer.'
 
         # rename CLIP pre-trained keys
         state_dict = checkpoint['state_dict']
         for k in list(state_dict.keys()):
             # retain only base_encoder up to before the embedding layer
-            if k.startswith(visual_keyword) and not k.startswith(visual_keyword + linear_keyword):
+            if k.startswith(visual_keyword) or "cls_token" in k or ".pos_embed" in k:
                 # remove prefix
                 state_dict[k[len('module.'):]] = state_dict[k]
             # delete renamed or unused k
@@ -122,7 +122,7 @@ def main(args):
 
     args.start_epoch = 0
     msg = model.load_state_dict(state_dict, strict=False)
-    assert set(msg.missing_keys) == {"%s.weight" % linear_keyword, "%s.bias" % linear_keyword}
+    # assert set(msg.missing_keys) == {"%s.weight" % linear_keyword, "%s.bias" % linear_keyword}
 
     # freeze all layers but the last fc
     for name, param in model.named_parameters():

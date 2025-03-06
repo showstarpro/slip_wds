@@ -93,6 +93,13 @@ class Transformer(nn.Module):
         self.layers = layers
         self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
 
+    def update_attn_mask(self, new_attn_mask: torch.Tensor):
+        """
+        更新所有 ResidualAttentionBlock 的 attn_mask。
+        """
+        for block in self.resblocks:
+            block.attn_mask = new_attn_mask
+
     def forward(self, x: torch.Tensor):
         return self.resblocks(x)
 
@@ -651,11 +658,12 @@ class LinearMlip(nn.Module):
         num_classes=1000,
     ):
         super().__init__()
-        self.encoder = model
+        self.transformer = model
         self.num_classes = num_classes
         self.vision_width = model.width
-        self.cls_token = nn.Parameter(torch.randn(self.vision_width))
-        self.pos_embed = nn.Parameter(torch.zeros(1, 196 + 1, self.embed_dim), requires_grad=False)
+        self.cls_token = nn.Parameter(torch.zeros(1, 1, self.vision_width))
+        self.pos_embed = nn.Parameter(torch.zeros(1, 196 + 1, self.vision_width), requires_grad=False)
+        self.attention_mask = torch.zeros(197, 197)
         self.norm = nn.LayerNorm(self.vision_width)
         self.head_drop = nn.Dropout(0.)
         self.head = nn.Linear(self.vision_width, self.num_classes)
@@ -669,13 +677,6 @@ class LinearMlip(nn.Module):
         x = torch.einsum('nchpwq->nhwcpq', x)
         x = x.reshape(bsz, h_ * w_, c * p ** 2)
         return x  # [n, l, d]
-    
-    def attention_mask(self):
-        # lazily create causal attention mask, with full attention between the vision tokens
-        # pytorch uses additive attention mask; fill with -inf
-        mask = torch.zeros(197, 197)
-        
-        return mask
 
     def forward(self, image):
         bsz, c, h, w = image.shape
@@ -684,7 +685,8 @@ class LinearMlip(nn.Module):
         cls_tokens = self.cls_token.to(x.device).expand(bsz, 1, -1)
         x = torch.cat([cls_tokens, x], dim=1)
         x = x.permute(1, 0, 2) # BLD -> LBD
-        x = self.encoder(x, attn_mask=self.attention_mask())
+        self.transformer.update_attn_mask(self.attention_mask)
+        x = self.transformer(x) ## mme transformer
         x = x.permute(1, 0, 2) # LBD -> BLD
         x = x[:, 0, :] # cls_token
         x = self.norm(x)
