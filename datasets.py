@@ -177,10 +177,45 @@ class FileListDataset(torch.utils.data.Dataset):
     def __len__(self):
         return len(self.images)
 
+class PromptTokenizeCaption:
+    def __init__(self, tokenizer):
+        self.tokenizer = tokenizer
+    def __call__(self, texts):
+        texts = [f"a photo of {text}" for text in texts]
+        return self.tokenizer(texts[:5])
 
-def get_downstream_dataset(catalog, name, is_train, transform):
+class Flickr(t_datasets.VisionDataset):
+    def __init__(self, root, annFile, transform, target_transform):
+        self.transform = transform
+        self.target_transform = target_transform
+
+        with open(annFile) as f:
+            data = json.load(f)
+
+        self.data = data
+        self.root = root
+
+    def __getitem__(self, index: int):
+        image_name = self.data[index]['image']
+        image_path = os.path.join(self.root, image_name)
+        image = Image.open(image_path)
+        image = self.transform(image)
+
+        captions = self.data[index]['caption']
+        captions = self.target_transform(captions)
+
+        return image, captions
+
+    def __len__(self):
+        return len(self.data)
+
+def get_downstream_dataset(catalog, name, is_train, transform, tokenizer=None):
     entry = catalog[name]
     root = entry['path']
+    if is_train:
+        split = "train"
+    else:
+        split = "test"
     if entry['type'] == 'imagefolder':
         dataset = t_datasets.ImageFolder(os.path.join(root, entry['train'] if is_train else entry['test']),
             transform=transform)
@@ -191,6 +226,34 @@ def get_downstream_dataset(catalog, name, is_train, transform):
         elif name == 'cifar100':
             dataset = t_datasets.CIFAR100(root, train=is_train,
                 transform=transform, download=True)
+        elif name == 'flowers102':
+            dataset = t_datasets.Flowers102(root,
+                transform=transform, download=True, split=split)
+        elif name == 'stanfordcars':
+            dataset = t_datasets.StanfordCars(root,
+                transform=transform, download=False, split=split)
+        elif name == 'imagenet-a':
+            dataset = t_datasets.ImageFolder(root, transform=transform)
+        elif name == 'imagenet-r':
+            dataset = t_datasets.ImageFolder(root, transform=transform)
+        elif name == 'imagenet-sketch':
+            dataset = t_datasets.ImageFolder(root, transform=transform)
+        elif name == 'mscoco':
+            annFile_path = entry['annFile']
+            dataset = t_datasets.CocoCaptions(
+             root,
+             annFile=annFile_path,
+             transform=transform,
+             target_transform=PromptTokenizeCaption(tokenizer)
+             )
+        elif name == 'flickr30k':
+            annFile_path = entry['annFile']
+            dataset = Flickr(
+             root,
+             annFile=annFile_path,
+             transform=transform,
+             target_transform=PromptTokenizeCaption(tokenizer)
+             )
         elif name == 'stl10':
             dataset = t_datasets.STL10(root, split='train' if is_train else 'test',
                 transform=transform, download=True)

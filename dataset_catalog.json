@@ -6,11 +6,41 @@
         "test": "test"
     },
     "cifar10": {
-        "path": "./data/cifar10",
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/cifar10",
         "type": "special"
     },
     "cifar100": {
-        "path": "./data/cifar100",
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/cifar100",
+        "type": "special"
+    },
+    "flowers102": {
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/flower_102/dataset",
+        "type": "special"
+    },
+    "stanfordcars": {
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets",
+        "type": "special"
+    },
+    "imagenet-a": {
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/imagenet-a/test_data",
+        "type": "special"
+    },
+    "imagenet-r": {
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/imagenet-r/test_data",
+        "type": "special"
+    },
+    "imagenet-sketch": {
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/imagenetsketch/data/sketch",
+        "type": "special"
+    },
+    "mscoco": {
+        "path": "/lpai/dataset/coco2017/0-1-0/coco/val2017",
+        "annFile": "/lpai/dataset/coco2017/0-1-0/coco/annotations/captions_val2017.json",
+        "type": "special"
+    },
+    "flickr30k": {
+        "path": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/flickr30k/flickr30k-images/",
+        "annFile": "/lpai/volumes/so-volume-bd-ga/lhp/datasets/flickr30k/flickr30k_annotations_test.json",
         "type": "special"
     },
     "cub200": {
@@ -142,9 +172,9 @@
         "test": "test"
     },
     "imagenet": {
-        "path": "/path/to/dataset",
+        "path": "/lpai/dataset/imagenet-1k/0-1-0",
         "type": "imagefolder",
         "train": "train",
-        "test": "val"
+        "test": "ILSVRC2012/val"
     }
 }

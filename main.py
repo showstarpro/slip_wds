@@ -180,6 +180,7 @@ def main(args):
     cwd = os.path.dirname(os.path.realpath(__file__))
     with open(os.path.join(cwd, 'dataset_catalog.json')) as f:
         root = json.load(f)['imagenet']['path']
+    # val_dataset = ImageFolder(os.path.join(root, 'ILSVRC2012/val'), val_transform)
     val_dataset = ImageFolder(os.path.join(root, 'val'), val_transform)
 
     # dist eval resamples data to pad uneven batch sizes

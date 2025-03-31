@@ -29,19 +29,19 @@ import utils
 def get_args_parser():
     parser = argparse.ArgumentParser(description='Linear probe evaluation', add_help=False)
     parser.add_argument('--dataset', default='imagenet', help='dataset name')
-    parser.add_argument('--output-dir', default='./', type=str)
+    parser.add_argument('--output-dir', default='/lpai/output/models/', type=str)
     parser.add_argument('-a', '--arch', metavar='ARCH', default='vit_base_patch16_224',
                         help='model architecture: (default: ViT-B/16)')
     parser.add_argument('-j', '--workers', default=64, type=int, metavar='N',
                         help='number of data loading workers (default: 64)')
-    parser.add_argument('--epochs', default=90, type=int, metavar='N',
+    parser.add_argument('--epochs', default=30, type=int, metavar='N',
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
     parser.add_argument('-b', '--batch-size', default=128, type=int,
                         metavar='N',
                         help='number of samples per-device/per-gpu ')
-    parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+    parser.add_argument('--lr', '--learning-rate', default=0.005, type=float,
                         metavar='LR', help='initial (base) learning rate', dest='lr')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
@@ -70,6 +70,7 @@ def get_args_parser():
                         help='GPU id to use.')
     parser.add_argument('--pretrained', default='', type=str,
                         help='path to CLIP pretrained checkpoint')
+    parser.add_argument('--num-classes', default=1000, type=int)
     return parser
 
 best_acc1 = 0
@@ -117,7 +118,7 @@ def main(args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = timm.models.create_model(args.arch, num_classes=1000)
+    model = timm.models.create_model(args.arch, num_classes=args.num_classes)
 
     args.start_epoch = 0
     msg = model.load_state_dict(state_dict, strict=False)
@@ -146,8 +147,10 @@ def main(args):
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
     assert len(parameters) == 2  # weight, bias
 
-    optimizer = torch.optim.SGD(parameters, init_lr,
-                                momentum=args.momentum,
+    # optimizer = torch.optim.SGD(parameters, init_lr,
+    #                             momentum=args.momentum,
+    #                             weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(parameters, init_lr,
                                 weight_decay=args.weight_decay)
 
     # optionally resume from a checkpoint
