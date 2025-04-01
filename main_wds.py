@@ -241,10 +241,19 @@ def main(args):
     tokenizer = SimpleTokenizer()
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                      std=[0.229, 0.224, 0.225])
+    # train_transform = transforms.Compose([
+    #         transforms.RandomResizedCrop(224, scale=(0.5, 1.0)),
+    #         transforms.ToTensor(),
+    #         normalize
+    #     ])
     train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=(0.5, 1.0)),
+            transforms.RandomResizedCrop(size=(224, 224), scale=(0.9, 1.0)),
+            transforms.RandomApply([
+                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+            ], p=0.8),
+            transforms.RandomGrayscale(p=0.2),
             transforms.ToTensor(),
-            normalize
+            normalize,
         ])
     val_transform = transforms.Compose([
             transforms.Resize(224),
@@ -352,11 +361,15 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, lr_schedule,
         for k, param_group in enumerate(optimizer.param_groups):
             param_group['lr'] = lr_schedule[it]
 
-        inputs = [tensor.cuda(args.gpu, non_blocking=True) for tensor in inputs]
+        image1, image2, texts = inputs
+        image1 = image1.cuda(args.gpu, non_blocking=True)
+        image2 = image2.cuda(args.gpu, non_blocking=True)
+        image = torch.stack((image1, image2), dim=0)
+        text = texts.cuda(args.gpu, non_blocking=True)
 
         # compute output
         with amp.autocast(enabled=not args.disable_amp):
-            outputs = model(*inputs)
+            outputs = model(image, text)
             loss_dict = criterion(outputs)
             loss = loss_dict['loss']
             loss /= args.update_freq
@@ -429,7 +442,7 @@ def validate_zeroshot(val_loader, model, tokenizer, args):
         for l in labels:
             texts = [t.format(l) for t in templates]
             texts = tokenizer(texts).cuda(args.gpu, non_blocking=True)
-            class_embeddings = utils.get_model(model).encode_text(texts)
+            class_embeddings, _, _ = utils.get_model(model).encode_text(texts)
             class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)
             class_embeddings = class_embeddings.mean(dim=0)
             class_embeddings = class_embeddings / class_embeddings.norm(dim=-1, keepdim=True)

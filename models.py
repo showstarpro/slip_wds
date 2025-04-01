@@ -13,6 +13,9 @@ import torch
 from torch import nn
 
 import losses
+import math
+from pos_embed import get_2d_sincos_pos_embed
+import torch.nn.functional as F
 
 
 class LayerNorm(nn.LayerNorm):
@@ -43,12 +46,18 @@ class ResidualAttentionBlock(nn.Module):
         self.ln_2 = LayerNorm(d_model)
         self.attn_mask = attn_mask
 
-    def attention(self, x: torch.Tensor):
-        self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
-        return self.attn(x, x, x, need_weights=False, attn_mask=self.attn_mask)[0]
+    def attention(self, x: torch.Tensor, mask: torch.Tensor=None):
+        if mask is not None:
+            mask = mask.to(dtype=x.dtype, device=x.device)
+        elif self.attn_mask is not None:
+            mask = self.attn_mask.to(dtype=x.dtype, device=x.device)
+        else:
+            mask = None
+        # self.attn_mask = self.attn_mask.to(dtype=x.dtype, device=x.device) if self.attn_mask is not None else None
+        return self.attn(x, x, x, need_weights=False, attn_mask=mask)[0]
 
-    def forward(self, x: torch.Tensor):
-        x = x + self.attention(self.ln_1(x))
+    def forward(self, x: torch.Tensor, mask: torch.Tensor=None):
+        x = x + self.attention(self.ln_1(x), mask)
         x = x + self.mlp(self.ln_2(x))
         return x
 
@@ -58,10 +67,15 @@ class Transformer(nn.Module):
         super().__init__()
         self.width = width
         self.layers = layers
-        self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
+        # self.resblocks = nn.Sequential(*[ResidualAttentionBlock(width, heads, attn_mask) for _ in range(layers)])
+        self.resblocks = nn.ModuleList([
+                        ResidualAttentionBlock(width, heads, attn_mask)
+                        for _ in range(layers)])
 
-    def forward(self, x: torch.Tensor):
-        return self.resblocks(x)
+    def forward(self, x: torch.Tensor, mask: torch.Tensor=None):
+        for r in self.resblocks:
+            x = r(x, mask=mask)
+        return x
 
 
 class CLIP(nn.Module):
@@ -103,6 +117,26 @@ class CLIP(nn.Module):
 
         self.initialize_parameters()
 
+        #### ------------------------- ####
+        ### add new sentence features
+        # fixed sin-cos embedding
+        length_vision_tokens = self.visual.pos_embed.shape[1]
+        self.vision_pos = nn.Parameter(
+            torch.zeros(length_vision_tokens, embed_dim), requires_grad=False)
+        pos_embed_type = get_2d_sincos_pos_embed(embed_dim, int(math.sqrt(length_vision_tokens)), cls_token=True)
+        self.vision_pos.data.copy_(torch.from_numpy(pos_embed_type).float())
+
+        layers = 2
+        self.sentence_transformer_heads = transformer_heads
+        self.sentence_transformer = Transformer(
+            width=embed_dim,
+            layers=layers,
+            heads=transformer_heads,
+            attn_mask=None ## 
+        )
+        self.sent_nrom = LayerNorm(embed_dim)
+        #### ------------------------- ####
+
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
         nn.init.normal_(self.positional_embedding, std=0.01)
@@ -143,17 +177,70 @@ class CLIP(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
+        text_tokens = x @ self.text_projection
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+        #### ------------------------- ####
+        index_visible = text.argmax(dim=-1)
+        #### ------------------------- ####
+
+        return x, text_tokens, index_visible
+    
+
+    def forward_sentence(self, image_tokens, text_tokens, index_visible):
+        image_tokens = image_tokens + self.vision_pos.to(image_tokens.device)
+        text_tokens = text_tokens + self.positional_embedding
+        
+        x = torch.cat([image_tokens, text_tokens], dim=1)
+        
+        index_visible = image_tokens.shape[1] + index_visible
+        index_visible = index_visible.to(x.device)
+
+        # 生成通用掩码模板 [seq_len, seq_len]
+        seq_len = image_tokens.shape[1] + self.context_length
+        col_indices = torch.arange(seq_len).to(x.device)
+        row_template = col_indices.unsqueeze(0) <= index_visible.unsqueeze(-1)  # [batch_size, seq_len]
+        sentence_attn_mask = (row_template.unsqueeze(-1) & row_template.unsqueeze(-2))
+        sentence_attn_mask = ~sentence_attn_mask  # 反转逻辑：True 表示需要屏蔽
+        sentence_attn_mask = sentence_attn_mask.repeat_interleave(self.sentence_transformer_heads, dim=0)  # [batch_size * num_heads, seq_len, seq_len]
+        
+        x = x.permute(1, 0, 2)  # NLD -> LND
+        x = self.sentence_transformer(x, mask=sentence_attn_mask)
+        x = x.permute(1, 0, 2)  # LND -> NLD
+        x = self.sent_nrom(x)
+        x = x[:, 0]
+        x = F.normalize(x, dim=-1)
 
         return x
 
     def forward(self, image, text):
-        image_embed = self.encode_image(image)
-        text_embed = self.encode_text(text)
+        if image.dim() == 5:
+            image1 = image[0]
+            image2 = image[1]
 
-        return {'image_embed': image_embed,
-                'text_embed': text_embed,
-                'logit_scale': self.logit_scale.exp()}
+            image1_tokens = self.visual.forward_features(image1) @ self.image_projection
+            image2_tokens = self.visual.forward_features(image2) @ self.image_projection
+            image1_embed = image1_tokens[:,0] 
+            image2_embed = image2_tokens[:,0]
+
+            text_embed, text_tokens, index_visible = self.encode_text(text)
+            sentence1_features = self.forward_sentence(image_tokens=image1_tokens, text_tokens=text_tokens, index_visible=index_visible)
+            sentence2_features = self.forward_sentence(image_tokens=image2_tokens, text_tokens=text_tokens, index_visible=index_visible)
+        
+            return {'image1_embed': image1_embed,
+                    'image2_embed': image2_embed,
+                    'text_embed': text_embed,
+                    'sentence1_features': sentence1_features,
+                    'sentence2_features': sentence2_features,
+                    'logit_scale': self.logit_scale.exp()}
+
+        else:
+            image_embed = self.encode_image(image)
+            text_embed = self.encode_text(text)
+
+            return {'image_embed': image_embed,
+                    'text_embed': text_embed,
+                    'logit_scale': self.logit_scale.exp()}
 
 
 class SIMCLR(nn.Module):
@@ -249,7 +336,7 @@ def get_metric_names(model):
     if model.startswith('SLIP'):
         return ['loss', 'clip_loss', 'ssl_loss', 'clip_acc', 'ssl_acc']
     elif model.startswith('CLIP'):
-        return ['loss', 'clip_loss', 'clip_acc']
+        return ['loss', 'clip_loss', 'sentence_loss', 'clip_acc']
     else:
         return ['loss', 'ssl_loss', 'ssl_acc']
 

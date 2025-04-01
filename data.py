@@ -401,31 +401,30 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
     
     # Function to preprocess images by applying two different transformations
     def process_sample(sample):
-        normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
-                                     std=[0.229, 0.224, 0.225])
-        augment = transforms.Compose([
-            transforms.RandomResizedCrop(224, scale=(0.08, 1.)),
-            transforms.RandomApply([
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-            ], p=0.8),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.RandomApply([utils.GaussianBlur([.1, 2.])], p=0.5),
-            transforms.RandomHorizontalFlip(),
-            transforms.ToTensor(),
-            normalize,
-        ])
+        # normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
+        #                              std=[0.229, 0.224, 0.225])
+        # augment = transforms.Compose([
+        #     transforms.RandomResizedCrop(224, scale=(0.08, 1.)),
+        #     transforms.RandomApply([
+        #         transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+        #     ], p=0.8),
+        #     transforms.RandomGrayscale(p=0.2),
+        #     transforms.RandomApply([utils.GaussianBlur([.1, 2.])], p=0.5),
+        #     transforms.RandomHorizontalFlip(),
+        #     transforms.ToTensor(),
+        #     normalize,
+        # ])
         img = sample["image"]  # Assume the image is under the key "image"
-        image = preprocess_img(img)  # Apply first transformation
-        img1 = augment(img)
-        img2 = augment(img)  # Apply second transformation
+        image1 = preprocess_img(img)  # Apply first transformation
+        image2 = preprocess_img(img)  # Apply first transformation
         txt = tokenizer(sample['text'])
-        return {"image": image, "text": txt, "aug1": img1, "aug2": img2}  # Assume "text" is the label key
+        return {"image1": image1, "image2": image2, "text": txt}  # Assume "text" is the label key
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
         wds.rename(image="jpg;png;jpeg;webp", text="txt"),
         wds.map(process_sample),  # Apply the custom processing function
-        wds.to_tuple("image", "text", "aug1", "aug2"),
+        wds.to_tuple("image1", "image2", "text"),
         # wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
         # wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train)

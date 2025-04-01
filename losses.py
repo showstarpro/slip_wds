@@ -15,41 +15,86 @@ class CLIPLoss(nn.Module):
         super().__init__()
         self.labels = None
         self.last_local_batch_size = None
+        self.mask = None
 
     def forward(self, outputs):
-        image_embed = outputs['image_embed']
+        image1_embed = outputs['image1_embed']
+        image2_embed = outputs['image2_embed']
         text_embed = outputs['text_embed']
+        sentence1_features = outputs['sentence1_features']
+        sentence2_features = outputs['sentence2_features']
         logit_scale = outputs['logit_scale']
-        local_batch_size = image_embed.size(0)
+        local_batch_size = image1_embed.size(0)
 
         if local_batch_size != self.last_local_batch_size:
             self.labels = local_batch_size * utils.get_rank() + torch.arange(
-                local_batch_size, device=image_embed.device
+                local_batch_size, device=image1_embed.device
             )
+            total_batch_size = local_batch_size * utils.get_world_size()
+            self.masks = F.one_hot(self.labels, total_batch_size) * 1e9
             self.last_local_batch_size = local_batch_size
 
         # normalized features
-        image_embed = F.normalize(image_embed, dim=-1, p=2)
+        image1_embed = F.normalize(image1_embed, dim=-1, p=2)
+        image2_embed = F.normalize(image2_embed, dim=-1, p=2)
         text_embed = F.normalize(text_embed, dim=-1, p=2)
 
         # gather features from all GPUs
-        image_embed_all, text_embed_all = \
-            utils.all_gather_batch([image_embed, text_embed])
+        image1_embed_all, text_embed_all = \
+            utils.all_gather_batch([image1_embed, text_embed])
 
         # cosine similarity as logits
-        logits_per_image = logit_scale * image_embed @ text_embed_all.t()
-        logits_per_text = logit_scale * text_embed @ image_embed_all.t()
+        logits_per_image1 = logit_scale * image1_embed @ text_embed_all.t()
+        logits_per_text1 = logit_scale * text_embed @ image1_embed_all.t()
 
-        loss = (F.cross_entropy(logits_per_image, self.labels) + \
-            F.cross_entropy(logits_per_text, self.labels)) / 2
+        loss1 = (F.cross_entropy(logits_per_image1, self.labels) + \
+            F.cross_entropy(logits_per_text1, self.labels)) / 2
+
+        # gather features from all GPUs
+        image2_embed_all, text_embed_all = \
+            utils.all_gather_batch([image2_embed, text_embed])
+
+        # cosine similarity as logits
+        logits_per_image2 = logit_scale * image2_embed @ text_embed_all.t()
+        logits_per_text2 = logit_scale * text_embed @ image2_embed_all.t()
+
+        loss2 = (F.cross_entropy(logits_per_image2, self.labels) + \
+            F.cross_entropy(logits_per_text2, self.labels)) / 2
+
+        clip_loss = (loss1 + loss2) /2
+
+
+        #### ------------------------- ####
+        #### add for sentence_image_aug ####
+        #### ------------------------- ####
+        # gather features from all GPUs
+        all_sentence1_features, all_sentence2_features = \
+            utils.all_gather_batch([sentence1_features, sentence2_features])
+        
+        logits_per_sentence11 = logit_scale * sentence1_features @ all_sentence1_features.T
+        logits_per_sentence11 = logits_per_sentence11 - self.masks 
+        logits_per_sentence22 = logit_scale * sentence2_features @ all_sentence2_features.T
+        logits_per_sentence22 = logits_per_sentence22 - self.masks 
+        
+        logits_per_sentence12 = logit_scale * sentence1_features @ all_sentence2_features.T
+        logits_per_sentence21 = logit_scale * sentence2_features @ all_sentence1_features.T
+
+        loss_sentence1 = F.cross_entropy(torch.cat([logits_per_sentence12, logits_per_sentence11], dim=1), self.labels)
+        loss_sentence2 = F.cross_entropy(torch.cat([logits_per_sentence21, logits_per_sentence22], dim=1), self.labels)
+
+        sentence_loss =  2 * (loss_sentence1 + loss_sentence2) / 2
+
+        loss = clip_loss + sentence_loss
+        #### ------------------------- ####
+
 
         # compute accuracy
         with torch.no_grad():
-            pred = torch.argmax(logits_per_image, dim=-1)
+            pred = torch.argmax(logits_per_image1, dim=-1)
             correct = pred.eq(self.labels).sum()
             acc = 100 * correct / local_batch_size
 
-        return {'loss': loss, 'clip_loss': loss, 'clip_acc': acc}
+        return {'loss': loss, 'clip_loss': clip_loss, 'sentence_loss': sentence_loss, 'clip_acc': acc}
 
 
 class SIMCLRLoss(nn.Module):
