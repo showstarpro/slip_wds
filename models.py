@@ -78,6 +78,170 @@ class Transformer(nn.Module):
         return x
 
 
+# class CLIP(nn.Module):
+#     def __init__(self,
+#                  embed_dim: int,
+#                  # vision
+#                  vision_width: int,
+#                  vision_model: nn.Module,
+#                  # text
+#                  context_length: int,
+#                  vocab_size: int,
+#                  transformer_width: int,
+#                  transformer_heads: int,
+#                  transformer_layers: int,
+#                  **kwargs,
+#                  ):
+#         super().__init__()
+
+#         self.context_length = context_length
+#         self.vision_width = vision_width
+
+#         self.visual = vision_model
+
+#         self.transformer = Transformer(
+#             width=transformer_width,
+#             layers=transformer_layers,
+#             heads=transformer_heads,
+#             attn_mask=self.build_attention_mask(),
+#         )
+
+#         self.vocab_size = vocab_size
+#         self.token_embedding = nn.Embedding(vocab_size, transformer_width)
+#         self.positional_embedding = nn.Parameter(torch.empty(self.context_length, transformer_width))
+#         self.ln_final = LayerNorm(transformer_width)
+
+#         self.image_projection = nn.Parameter(torch.empty(vision_width, embed_dim))
+#         self.text_projection = nn.Parameter(torch.empty(transformer_width, embed_dim))
+#         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
+
+#         self.initialize_parameters()
+
+#         #### ------------------------- ####
+#         ### add new sentence features
+#         # fixed sin-cos embedding
+#         length_vision_tokens = self.visual.pos_embed.shape[1]
+#         self.vision_pos = nn.Parameter(
+#             torch.zeros(length_vision_tokens, embed_dim), requires_grad=False)
+#         pos_embed_type = get_2d_sincos_pos_embed(embed_dim, int(math.sqrt(length_vision_tokens)), cls_token=True)
+#         self.vision_pos.data.copy_(torch.from_numpy(pos_embed_type).float())
+
+#         layers = 2
+#         self.sentence_transformer_heads = transformer_heads
+#         self.sentence_transformer = Transformer(
+#             width=embed_dim,
+#             layers=layers,
+#             heads=transformer_heads,
+#             attn_mask=None ## 
+#         )
+#         self.sent_nrom = LayerNorm(embed_dim)
+#         #### ------------------------- ####
+
+#     def initialize_parameters(self):
+#         nn.init.normal_(self.token_embedding.weight, std=0.02)
+#         nn.init.normal_(self.positional_embedding, std=0.01)
+
+#         proj_std = (self.transformer.width ** -0.5) * ((2 * self.transformer.layers) ** -0.5)
+#         attn_std = self.transformer.width ** -0.5
+#         fc_std = (2 * self.transformer.width) ** -0.5
+#         for block in self.transformer.resblocks:
+#             nn.init.normal_(block.attn.in_proj_weight, std=attn_std)
+#             nn.init.normal_(block.attn.out_proj.weight, std=proj_std)
+#             nn.init.normal_(block.mlp.c_fc.weight, std=fc_std)
+#             nn.init.normal_(block.mlp.c_proj.weight, std=proj_std)
+
+#         nn.init.normal_(self.image_projection, std=self.vision_width ** -0.5)
+#         nn.init.normal_(self.text_projection, std=self.transformer.width ** -0.5)
+
+#     def build_attention_mask(self):
+#         # lazily create causal attention mask, with full attention between the vision tokens
+#         # pytorch uses additive attention mask; fill with -inf
+#         mask = torch.empty(self.context_length, self.context_length)
+#         mask.fill_(float("-inf"))
+#         mask.triu_(1)  # zero out the lower diagonal
+#         return mask
+
+#     def encode_image(self, image):
+#         x = self.visual(image)
+#         x = x @ self.image_projection
+
+#         return x
+
+#     def encode_text(self, text):
+#         x = self.token_embedding(text)  # [batch_size, n_ctx, d_model]
+#         x = x + self.positional_embedding
+#         x = x.permute(1, 0, 2)  # NLD -> LND
+#         x = self.transformer(x)
+#         x = x.permute(1, 0, 2)  # LND -> NLD
+#         x = self.ln_final(x)
+
+#         # x.shape = [batch_size, n_ctx, transformer.width]
+#         # take features from the eot embedding (eot_token is the highest number in each sequence)
+#         text_tokens = x @ self.text_projection
+#         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
+
+#         #### ------------------------- ####
+#         index_visible = text.argmax(dim=-1)
+#         #### ------------------------- ####
+
+#         return x, text_tokens, index_visible
+    
+
+#     def forward_sentence(self, image_tokens, text_tokens, index_visible):
+#         image_tokens = image_tokens + self.vision_pos.to(image_tokens.device)
+#         text_tokens = text_tokens + self.positional_embedding
+        
+#         x = torch.cat([image_tokens, text_tokens], dim=1)
+        
+#         index_visible = image_tokens.shape[1] + index_visible
+#         index_visible = index_visible.to(x.device)
+
+#         # 生成通用掩码模板 [seq_len, seq_len]
+#         seq_len = image_tokens.shape[1] + self.context_length
+#         col_indices = torch.arange(seq_len).to(x.device)
+#         row_template = col_indices.unsqueeze(0) <= index_visible.unsqueeze(-1)  # [batch_size, seq_len]
+#         sentence_attn_mask = (row_template.unsqueeze(-1) & row_template.unsqueeze(-2))
+#         sentence_attn_mask = ~sentence_attn_mask  # 反转逻辑：True 表示需要屏蔽
+#         sentence_attn_mask = sentence_attn_mask.repeat_interleave(self.sentence_transformer_heads, dim=0)  # [batch_size * num_heads, seq_len, seq_len]
+        
+#         x = x.permute(1, 0, 2)  # NLD -> LND
+#         x = self.sentence_transformer(x, mask=sentence_attn_mask)
+#         x = x.permute(1, 0, 2)  # LND -> NLD
+#         x = self.sent_nrom(x)
+#         x = x[:, 0]
+#         x = F.normalize(x, dim=-1)
+
+#         return x
+
+#     def forward(self, image, text):
+#         if image.dim() == 5:
+#             image1 = image[0]
+#             image2 = image[1]
+
+#             image1_tokens = self.visual.forward_features(image1) @ self.image_projection
+#             image2_tokens = self.visual.forward_features(image2) @ self.image_projection
+#             image1_embed = image1_tokens[:,0] 
+#             image2_embed = image2_tokens[:,0]
+
+#             text_embed, text_tokens, index_visible = self.encode_text(text)
+#             sentence1_features = self.forward_sentence(image_tokens=image1_tokens, text_tokens=text_tokens, index_visible=index_visible)
+#             sentence2_features = self.forward_sentence(image_tokens=image2_tokens, text_tokens=text_tokens, index_visible=index_visible)
+        
+#             return {'image1_embed': image1_embed,
+#                     'image2_embed': image2_embed,
+#                     'text_embed': text_embed,
+#                     'sentence1_features': sentence1_features,
+#                     'sentence2_features': sentence2_features,
+#                     'logit_scale': self.logit_scale.exp()}
+
+#         else:
+#             image_embed = self.encode_image(image)
+#             text_embed = self.encode_text(text)
+
+#             return {'image_embed': image_embed,
+#                     'text_embed': text_embed,
+#                     'logit_scale': self.logit_scale.exp()}
+
 class CLIP(nn.Module):
     def __init__(self,
                  embed_dim: int,
@@ -116,26 +280,6 @@ class CLIP(nn.Module):
         self.logit_scale = nn.Parameter(torch.ones([]) * np.log(1 / 0.07))
 
         self.initialize_parameters()
-
-        #### ------------------------- ####
-        ### add new sentence features
-        # fixed sin-cos embedding
-        length_vision_tokens = self.visual.pos_embed.shape[1]
-        self.vision_pos = nn.Parameter(
-            torch.zeros(length_vision_tokens, embed_dim), requires_grad=False)
-        pos_embed_type = get_2d_sincos_pos_embed(embed_dim, int(math.sqrt(length_vision_tokens)), cls_token=True)
-        self.vision_pos.data.copy_(torch.from_numpy(pos_embed_type).float())
-
-        layers = 2
-        self.sentence_transformer_heads = transformer_heads
-        self.sentence_transformer = Transformer(
-            width=embed_dim,
-            layers=layers,
-            heads=transformer_heads,
-            attn_mask=None ## 
-        )
-        self.sent_nrom = LayerNorm(embed_dim)
-        #### ------------------------- ####
 
     def initialize_parameters(self):
         nn.init.normal_(self.token_embedding.weight, std=0.02)
@@ -177,70 +321,17 @@ class CLIP(nn.Module):
 
         # x.shape = [batch_size, n_ctx, transformer.width]
         # take features from the eot embedding (eot_token is the highest number in each sequence)
-        text_tokens = x @ self.text_projection
         x = x[torch.arange(x.shape[0]), text.argmax(dim=-1)] @ self.text_projection
-
-        #### ------------------------- ####
-        index_visible = text.argmax(dim=-1)
-        #### ------------------------- ####
-
-        return x, text_tokens, index_visible
-    
-
-    def forward_sentence(self, image_tokens, text_tokens, index_visible):
-        image_tokens = image_tokens + self.vision_pos.to(image_tokens.device)
-        text_tokens = text_tokens + self.positional_embedding
-        
-        x = torch.cat([image_tokens, text_tokens], dim=1)
-        
-        index_visible = image_tokens.shape[1] + index_visible
-        index_visible = index_visible.to(x.device)
-
-        # 生成通用掩码模板 [seq_len, seq_len]
-        seq_len = image_tokens.shape[1] + self.context_length
-        col_indices = torch.arange(seq_len).to(x.device)
-        row_template = col_indices.unsqueeze(0) <= index_visible.unsqueeze(-1)  # [batch_size, seq_len]
-        sentence_attn_mask = (row_template.unsqueeze(-1) & row_template.unsqueeze(-2))
-        sentence_attn_mask = ~sentence_attn_mask  # 反转逻辑：True 表示需要屏蔽
-        sentence_attn_mask = sentence_attn_mask.repeat_interleave(self.sentence_transformer_heads, dim=0)  # [batch_size * num_heads, seq_len, seq_len]
-        
-        x = x.permute(1, 0, 2)  # NLD -> LND
-        x = self.sentence_transformer(x, mask=sentence_attn_mask)
-        x = x.permute(1, 0, 2)  # LND -> NLD
-        x = self.sent_nrom(x)
-        x = x[:, 0]
-        x = F.normalize(x, dim=-1)
 
         return x
 
     def forward(self, image, text):
-        if image.dim() == 5:
-            image1 = image[0]
-            image2 = image[1]
+        image_embed = self.encode_image(image)
+        text_embed = self.encode_text(text)
 
-            image1_tokens = self.visual.forward_features(image1) @ self.image_projection
-            image2_tokens = self.visual.forward_features(image2) @ self.image_projection
-            image1_embed = image1_tokens[:,0] 
-            image2_embed = image2_tokens[:,0]
-
-            text_embed, text_tokens, index_visible = self.encode_text(text)
-            sentence1_features = self.forward_sentence(image_tokens=image1_tokens, text_tokens=text_tokens, index_visible=index_visible)
-            sentence2_features = self.forward_sentence(image_tokens=image2_tokens, text_tokens=text_tokens, index_visible=index_visible)
-        
-            return {'image1_embed': image1_embed,
-                    'image2_embed': image2_embed,
-                    'text_embed': text_embed,
-                    'sentence1_features': sentence1_features,
-                    'sentence2_features': sentence2_features,
-                    'logit_scale': self.logit_scale.exp()}
-
-        else:
-            image_embed = self.encode_image(image)
-            text_embed = self.encode_text(text)
-
-            return {'image_embed': image_embed,
-                    'text_embed': text_embed,
-                    'logit_scale': self.logit_scale.exp()}
+        return {'image_embed': image_embed,
+                'text_embed': text_embed,
+                'logit_scale': self.logit_scale.exp()}
 
 
 class SIMCLR(nn.Module):
@@ -308,11 +399,11 @@ class SLIP(CLIP):
             ("layer3", nn.Linear(mlp_dim, out_dim)),
         ]))
 
-    def forward(self, image, text, aug1, aug2):
-        aug1_embed = self.image_mlp(self.visual(aug1))
-        aug2_embed = self.image_mlp(self.visual(aug2))
-        
-        image_embed = self.encode_image(image)
+    def forward(self, image1, image2, text):        
+        aug1_embed = self.image_mlp(self.visual(image1))
+        aug2_embed = self.image_mlp(self.visual(image2))
+
+        image_embed = self.encode_image(image1)
         text_embed = self.encode_text(text)
 
         return {'image_embed': image_embed,

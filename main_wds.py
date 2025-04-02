@@ -246,15 +246,27 @@ def main(args):
     #         transforms.ToTensor(),
     #         normalize
     #     ])
+    # train_transform = transforms.Compose([
+    #         transforms.RandomResizedCrop(size=(224, 224), scale=(0.9, 1.0)),
+    #         transforms.RandomApply([
+    #             transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+    #         ], p=0.8),
+    #         transforms.RandomGrayscale(p=0.2),
+    #         transforms.ToTensor(),
+    #         normalize,
+    #     ])
+    ###--------- change augument for image -------###
     train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(size=(224, 224), scale=(0.9, 1.0)),
-            transforms.RandomApply([
-                transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
-            ], p=0.8),
-            transforms.RandomGrayscale(p=0.2),
-            transforms.ToTensor(),
-            normalize,
-        ])
+        transforms.RandomResizedCrop(224, scale=(0.08, 1.)),
+        transforms.RandomApply([
+            transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
+        ], p=0.8),
+        transforms.RandomGrayscale(p=0.2),
+        transforms.RandomApply([utils.GaussianBlur([.1, 2.])], p=0.5),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+        normalize,
+    ])
     val_transform = transforms.Compose([
             transforms.Resize(224),
             transforms.CenterCrop(224),
@@ -364,12 +376,12 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, lr_schedule,
         image1, image2, texts = inputs
         image1 = image1.cuda(args.gpu, non_blocking=True)
         image2 = image2.cuda(args.gpu, non_blocking=True)
-        image = torch.stack((image1, image2), dim=0)
+        # image = torch.stack((image1, image2), dim=0)
         text = texts.cuda(args.gpu, non_blocking=True)
 
         # compute output
         with amp.autocast(enabled=not args.disable_amp):
-            outputs = model(image, text)
+            outputs = model(image1, image2, text)
             loss_dict = criterion(outputs)
             loss = loss_dict['loss']
             loss /= args.update_freq
