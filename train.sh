@@ -16,5 +16,5 @@ torchrun --nproc_per_node 3 --master_port 12345  -m  main_wds \
   --train-num-samples 10_968_539 \
   --imagenet-val '/lpai/dataset/imagenet-1k/0-1-0/ILSVRC2012/val' \
   --model CLIP_VITB16 \
-  --lr 3e-3 --wd 0.1 \
+  --lr 1e-3 --wd 0.1 \
   --output-dir /lpai/SLIP/logs

@@ -283,8 +283,8 @@ def main(args):
         return
 
     niter_per_ep = (data["train"].dataloader.num_batches // args.update_freq)
-    lr_schedule = utils.cosine_scheduler(args.lr, args.lr_end, args.epochs,
-        niter_per_ep, warmup_epochs=args.warmup_epochs, start_warmup_value=args.lr_start)
+    lr_schedule = utils.cosine_scheduler(args.lr, args.epochs,
+        niter_per_ep, warmup_epochs=args.warmup_epochs)
 
     if utils.is_main_process() and args.wandb:
         wandb_id = os.path.split(args.output_dir)[-1]
