@@ -246,7 +246,7 @@ def main(args):
     #         transforms.ToTensor(),
     #         normalize
     #     ])
-    train_transform = = transforms.Compose([
+    train_transform = transforms.Compose([
             transforms.RandomResizedCrop(224, scale=(0.5, 1.)),
             transforms.RandomApply([
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
