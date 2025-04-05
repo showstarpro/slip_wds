@@ -246,12 +246,14 @@ def main(args):
     #         transforms.ToTensor(),
     #         normalize
     #     ])
-    train_transform = transforms.Compose([
-            transforms.RandomResizedCrop(size=(224, 224), scale=(0.9, 1.0)),
+    train_transform = = transforms.Compose([
+            transforms.RandomResizedCrop(224, scale=(0.5, 1.)),
             transforms.RandomApply([
                 transforms.ColorJitter(0.4, 0.4, 0.4, 0.1)  # not strengthened
             ], p=0.8),
             transforms.RandomGrayscale(p=0.2),
+            transforms.RandomApply([utils.GaussianBlur([.1, 2.])], p=0.5),
+            transforms.RandomHorizontalFlip(),
             transforms.ToTensor(),
             normalize,
         ])

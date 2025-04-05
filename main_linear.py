@@ -29,19 +29,19 @@ import utils
 def get_args_parser():
     parser = argparse.ArgumentParser(description='Linear probe evaluation', add_help=False)
     parser.add_argument('--dataset', default='imagenet', help='dataset name')
-    parser.add_argument('--output-dir', default='./', type=str)
+    parser.add_argument('--output-dir', default='/lpai/output/checkpoints/', type=str)
     parser.add_argument('-a', '--arch', metavar='ARCH', default='vit_base_patch16_224',
                         help='model architecture: (default: ViT-B/16)')
     parser.add_argument('-j', '--workers', default=64, type=int, metavar='N',
                         help='number of data loading workers (default: 64)')
-    parser.add_argument('--epochs', default=90, type=int, metavar='N',
+    parser.add_argument('--epochs', default=30, type=int, metavar='N',
                         help='number of total epochs to run')
     parser.add_argument('--start-epoch', default=0, type=int, metavar='N',
                         help='manual epoch number (useful on restarts)')
     parser.add_argument('-b', '--batch-size', default=128, type=int,
                         metavar='N',
                         help='number of samples per-device/per-gpu ')
-    parser.add_argument('--lr', '--learning-rate', default=0.1, type=float,
+    parser.add_argument('--lr', '--learning-rate', default=0.005, type=float,
                         metavar='LR', help='initial (base) learning rate', dest='lr')
     parser.add_argument('--momentum', default=0.9, type=float, metavar='M',
                         help='momentum')
@@ -70,6 +70,7 @@ def get_args_parser():
                         help='GPU id to use.')
     parser.add_argument('--pretrained', default='', type=str,
                         help='path to CLIP pretrained checkpoint')
+    parser.add_argument('--num-classes', default=1000, type=int)
     return parser
 
 best_acc1 = 0
@@ -117,7 +118,7 @@ def main(args):
 
     # create model
     print("=> creating model '{}'".format(args.arch))
-    model = timm.models.create_model(args.arch, num_classes=1000)
+    model = timm.models.create_model(args.arch, num_classes=args.num_classes)
 
     args.start_epoch = 0
     msg = model.load_state_dict(state_dict, strict=False)
@@ -131,7 +132,7 @@ def main(args):
     getattr(model, linear_keyword).weight.data.normal_(mean=0.0, std=0.01)
     getattr(model, linear_keyword).bias.data.zero_()
 
-    init_lr = args.lr * int(args.batch_size / utils.get_world_size()) / 256
+    # init_lr = args.lr * int(args.batch_size / utils.get_world_size()) / 256
     args.workers = int((args.workers + utils.get_world_size() - 1) / utils.get_world_size())
 
     model.cuda(args.gpu)
@@ -146,8 +147,10 @@ def main(args):
     parameters = list(filter(lambda p: p.requires_grad, model.parameters()))
     assert len(parameters) == 2  # weight, bias
 
-    optimizer = torch.optim.SGD(parameters, init_lr,
-                                momentum=args.momentum,
+    # optimizer = torch.optim.SGD(parameters, init_lr,
+    #                             momentum=args.momentum,
+    #                             weight_decay=args.weight_decay)
+    optimizer = torch.optim.AdamW(parameters,
                                 weight_decay=args.weight_decay)
 
     # optionally resume from a checkpoint
@@ -216,16 +219,18 @@ def main(args):
     if args.evaluate:
         validate(val_loader, model, criterion, args)
         return
+    ###-----step update lr------###
+    scheduler = adjust_learning_rate(optimizer, args.lr, 0, len(train_loader) * args.epochs)
 
     print(args)
 
     for epoch in range(args.start_epoch, args.epochs):
         if args.distributed:
             train_sampler.set_epoch(epoch)
-        adjust_learning_rate(optimizer, init_lr, epoch, args)
+        # adjust_learning_rate(optimizer, init_lr, epoch, args)
 
         # train for one epoch
-        train_stats = train(train_loader, model, criterion, optimizer, epoch, args)
+        train_stats = train(train_loader, model, criterion, optimizer, scheduler, epoch, args)
 
         if (epoch + 1) % args.eval_freq != 0:
             continue
@@ -258,7 +263,7 @@ def main(args):
                 f.write(json.dumps(log_stats) + '\n')
 
 
-def train(train_loader, model, criterion, optimizer, epoch, args):
+def train(train_loader, model, criterion, optimizer, scheduler, epoch, args):
     batch_time = AverageMeter('Time', ':6.3f')
     data_time = AverageMeter('Data', ':6.3f')
     losses = AverageMeter('Loss', ':.4e')
@@ -287,7 +292,9 @@ def train(train_loader, model, criterion, optimizer, epoch, args):
             images = images.cuda(args.gpu, non_blocking=True)
         if torch.cuda.is_available():
             target = target.cuda(args.gpu, non_blocking=True)
-
+        ###-----step update lr--------###
+        step = len(train_loader) * epoch + i
+        scheduler(step)
         # compute output
         output = model(images)
         loss = criterion(output, target)
@@ -431,12 +438,30 @@ class ProgressMeter(object):
         return '[' + fmt + '/' + fmt.format(num_batches) + ']'
 
 
-def adjust_learning_rate(optimizer, init_lr, epoch, args):
-    """Decay the learning rate based on schedule"""
-    cur_lr = init_lr * 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
-    for param_group in optimizer.param_groups:
-        param_group['lr'] = cur_lr
+# def adjust_learning_rate(optimizer, init_lr, epoch, args):
+#     """Decay the learning rate based on schedule"""
+#     cur_lr = init_lr * 0.5 * (1. + math.cos(math.pi * epoch / args.epochs))
+#     for param_group in optimizer.param_groups:
+#         param_group['lr'] = cur_lr
+def _warmup_lr(base_lr, warmup_length, step):
+    return base_lr * (step + 1) / warmup_length
 
+def assign_learning_rate(optimizer, new_lr):
+    for param_group in optimizer.param_groups:
+        param_group["lr"] = new_lr
+
+def adjust_learning_rate(optimizer, init_lr, warmup_length, steps):
+    """Decay the learning rate based on schedule"""
+    def _lr_adjuster(step):
+        if step < warmup_length:
+            lr = _warmup_lr(init_lr, warmup_length, step)
+        else:
+            e = step - warmup_length
+            es = steps - warmup_length
+            lr = 0.5 * (1. + math.cos(math.pi * e / es)) * init_lr
+        assign_learning_rate(optimizer, lr)
+        return lr
+    return _lr_adjuster
 
 def accuracy(output, target, topk=(1,)):
     """Computes the accuracy over the k top predictions for the specified values of k"""
