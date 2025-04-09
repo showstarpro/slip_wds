@@ -29,7 +29,7 @@ import utils
 def get_args_parser():
     parser = argparse.ArgumentParser(description='Linear probe evaluation', add_help=False)
     parser.add_argument('--dataset', default='imagenet', help='dataset name')
-    parser.add_argument('--output-dir', default='/lpai/output/checkpoints/', type=str)
+    parser.add_argument('--output-dir', default='/lpai/output/checkpoints/slip_ori/', type=str)
     parser.add_argument('-a', '--arch', metavar='ARCH', default='vit_base_patch16_224',
                         help='model architecture: (default: ViT-B/16)')
     parser.add_argument('-j', '--workers', default=64, type=int, metavar='N',

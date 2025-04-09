@@ -203,7 +203,7 @@ class SLIPLoss(nn.Module):
 
     def forward(self, outputs):
         clip_loss_dict = self.clip_loss(outputs)
-        clip_loss = clip_loss_dict['clip_loss']
+        clip_loss = clip_loss_dict['loss']
         clip_acc = clip_loss_dict['clip_acc']
 
         ssl_loss_dict = self.ssl_loss(outputs)
@@ -212,6 +212,7 @@ class SLIPLoss(nn.Module):
 
         return {'loss': clip_loss + self.ssl_scale * ssl_loss,
                 'clip_loss': clip_loss,
+                'sentence_loss': clip_loss_dict['sentence_loss'],
                 'clip_acc': clip_acc,
                 'ssl_loss': ssl_loss,
                 'ssl_acc': ssl_acc}

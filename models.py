@@ -213,13 +213,16 @@ class CLIP(nn.Module):
 
         return x
 
+
     def forward(self, image, text):
         if image.dim() == 5:
             image1 = image[0]
             image2 = image[1]
 
-            image1_tokens = self.visual.forward_features(image1) @ self.image_projection
-            image2_tokens = self.visual.forward_features(image2) @ self.image_projection
+            aug1_tokens = self.visual.forward_features(image1) 
+            image1_tokens = aug1_tokens @ self.image_projection
+            aug2_tokens = self.visual.forward_features(image2) 
+            image2_tokens = aug2_tokens @ self.image_projection
             image1_embed = image1_tokens[:,0] 
             image2_embed = image2_tokens[:,0]
 
@@ -232,6 +235,8 @@ class CLIP(nn.Module):
                     'text_embed': text_embed,
                     'sentence1_features': sentence1_features,
                     'sentence2_features': sentence2_features,
+                    'aug1_embed': aug1_tokens[:, 0],
+                    'aug2_embed': aug2_tokens[:, 0],
                     'logit_scale': self.logit_scale.exp()}
 
         else:
@@ -308,15 +313,24 @@ class SLIP(CLIP):
             ("layer3", nn.Linear(mlp_dim, out_dim)),
         ]))
 
-    def forward(self, image, text, aug1, aug2):
-        aug1_embed = self.image_mlp(self.visual(aug1))
-        aug2_embed = self.image_mlp(self.visual(aug2))
+    def forward(self, image, text):
+        # aug1 = image[0]
+        # aug2 = image[1]
+        # aug1_embed = self.image_mlp(self.visual(aug1))
+        # aug2_embed = self.image_mlp(self.visual(aug2))
         
-        image_embed = self.encode_image(image)
-        text_embed = self.encode_text(text)
+        # image_embed = self.encode_image(image)
+        # text_embed = self.encode_text(text)
 
-        return {'image_embed': image_embed,
-                'text_embed': text_embed,
+        outputs = super(SLIP, self).forward(image, text)
+        aug1_embed = self.image_mlp(outputs['aug1_embed'])
+        aug2_embed = self.image_mlp(outputs['aug2_embed'])
+
+        return {'image1_embed': outputs['image1_embed'],
+                'image2_embed': outputs['image2_embed'],
+                'text_embed': outputs['text_embed'],
+                'sentence1_features': outputs['sentence1_features'],
+                'sentence2_features': outputs['sentence2_features'],
                 'logit_scale': self.logit_scale.exp(),
                 'aug1_embed': aug1_embed,
                 'aug2_embed': aug2_embed}
@@ -334,7 +348,7 @@ def get_loss(model, ssl_temp, ssl_scale):
 
 def get_metric_names(model):
     if model.startswith('SLIP'):
-        return ['loss', 'clip_loss', 'ssl_loss', 'clip_acc', 'ssl_acc']
+        return ['loss', 'clip_loss', 'sentence_loss', 'ssl_loss', 'clip_acc', 'ssl_acc']
     elif model.startswith('CLIP'):
         return ['loss', 'clip_loss', 'sentence_loss', 'clip_acc']
     else:
