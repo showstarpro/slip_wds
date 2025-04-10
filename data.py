@@ -417,14 +417,21 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         img = sample["image"]  # Assume the image is under the key "image"
         image1 = preprocess_img(img)  # Apply first transformation
         image2 = preprocess_img(img)  # Apply first transformation
-        txt = tokenizer(sample['text'])
-        return {"image1": image1, "image2": image2, "text": txt}  # Assume "text" is the label key
+        # origin_txt = tokenizer(sample['text']['caption']) 
+        shortLLA_txt = tokenizer(sample['text']['shortLLA_captions'])  
+        longLLA_txt = tokenizer(sample['text']['longLLA_captions'])
+        # shortIB_txt = tokenizer(sample['text']['shortIB_captions'])
+        # longIB_txt = tokenizer(sample['text']['longIB_captions'])
+        # shortSV_txt = tokenizer(sample['text']['shortSV_captions'])
+        # longSV_txt = tokenizer(sample['text']['longSV_captions'])
+        # txt = tokenizer(sample['text'])
+        return {"image1": image1, "image2": image2, "text1": shortLLA_txt, "text2": longLLA_txt}  # Assume "text" is the label key
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
-        wds.rename(image="jpg;png;jpeg;webp", text="txt"),
+        wds.rename(image="jpg;png;jpeg;webp", text="json"),
         wds.map(process_sample),  # Apply the custom processing function
-        wds.to_tuple("image1", "image2", "text"),
+        wds.to_tuple("image1", "image2", "text1", "text2"),
         # wds.map_dict(image=preprocess_img, text=lambda text: tokenizer(text)[0]),
         # wds.to_tuple("image", "text"),
         wds.batched(args.batch_size, partial=not is_train)

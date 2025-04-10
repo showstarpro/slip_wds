@@ -363,11 +363,14 @@ def train(train_loader, model, criterion, optimizer, scaler, epoch, lr_schedule,
         for k, param_group in enumerate(optimizer.param_groups):
             param_group['lr'] = lr_schedule[it]
 
-        image1, image2, texts = inputs
+        image1, image2, text1, text2 = inputs
         image1 = image1.cuda(args.gpu, non_blocking=True)
         image2 = image2.cuda(args.gpu, non_blocking=True)
         image = torch.stack((image1, image2), dim=0)
-        text = texts.cuda(args.gpu, non_blocking=True)
+        text1 = text1.cuda(args.gpu, non_blocking=True)
+        text2 = text2.cuda(args.gpu, non_blocking=True)
+        text = torch.stack((text1, text2), dim=0)
+        # text = texts.cuda(args.gpu, non_blocking=True)
 
         # compute output
         with amp.autocast(enabled=not args.disable_amp):

@@ -226,13 +226,17 @@ class CLIP(nn.Module):
             image1_embed = image1_tokens[:,0] 
             image2_embed = image2_tokens[:,0]
 
-            text_embed, text_tokens, index_visible = self.encode_text(text)
-            sentence1_features = self.forward_sentence(image_tokens=image1_tokens, text_tokens=text_tokens, index_visible=index_visible)
-            sentence2_features = self.forward_sentence(image_tokens=image2_tokens, text_tokens=text_tokens, index_visible=index_visible)
+            text1 = text[0]
+            text2 = text[1]
+            text1_embed, text1_tokens, index1_visible = self.encode_text(text1)
+            text2_embed, text2_tokens, index2_visible = self.encode_text(text2)
+            sentence1_features = self.forward_sentence(image_tokens=image1_tokens, text_tokens=text1_tokens, index_visible=index1_visible)
+            sentence2_features = self.forward_sentence(image_tokens=image2_tokens, text_tokens=text2_tokens, index_visible=index2_visible)
         
             return {'image1_embed': image1_embed,
                     'image2_embed': image2_embed,
-                    'text_embed': text_embed,
+                    'text1_embed': text1_embed,
+                    'text2_embed': text2_embed,
                     'sentence1_features': sentence1_features,
                     'sentence2_features': sentence2_features,
                     'aug1_embed': aug1_tokens[:, 0],

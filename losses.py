@@ -30,37 +30,42 @@ class CLIPLoss(nn.Module):
             labels = self.labels[device]
         return labels
     
-    def gather_features(self, image1_features, image2_features, text_features, sentence1_features, sentence2_features):
+    def gather_features(self, image1_features, image2_features, text1_features, text2_features, sentence1_features, sentence2_features):
         world_size = utils.get_world_size()
         rank = utils.get_rank()
         gathered_image1_features = [torch.zeros_like(image1_features) for _ in range(world_size)]
         gathered_image2_features = [torch.zeros_like(image2_features) for _ in range(world_size)]
-        gathered_text_features = [torch.zeros_like(text_features) for _ in range(world_size)]
+        gathered_text1_features = [torch.zeros_like(text1_features) for _ in range(world_size)]
+        gathered_text2_features = [torch.zeros_like(text2_features) for _ in range(world_size)]
         gathered_sentence1_features = [torch.zeros_like(sentence1_features) for _ in range(world_size)]
         gathered_sentence2_features = [torch.zeros_like(sentence2_features) for _ in range(world_size)]
         dist.all_gather(gathered_image1_features, image1_features)
         dist.all_gather(gathered_image2_features, image2_features)
-        dist.all_gather(gathered_text_features, text_features)
+        dist.all_gather(gathered_text1_features, text1_features)
+        dist.all_gather(gathered_text2_features, text2_features)
         dist.all_gather(gathered_sentence1_features, sentence1_features)
         dist.all_gather(gathered_sentence2_features, sentence2_features)
         # ensure grads for local rank when all_* features don't have a gradient
         gathered_image1_features[rank] = image1_features
         gathered_image2_features[rank] = image2_features
-        gathered_text_features[rank] = text_features
+        gathered_text1_features[rank] = text1_features
+        gathered_text2_features[rank] = text2_features
         gathered_sentence1_features[rank] = sentence1_features
         gathered_sentence2_features[rank] = sentence2_features
         all_image1_features = torch.cat(gathered_image1_features, dim=0)
         all_image2_features = torch.cat(gathered_image2_features, dim=0)
-        all_text_features = torch.cat(gathered_text_features, dim=0)
+        all_text1_features = torch.cat(gathered_text1_features, dim=0)
+        all_text2_features = torch.cat(gathered_text2_features, dim=0)
         all_sentence1_features = torch.cat(gathered_sentence1_features, dim=0)
         all_sentence2_features = torch.cat(gathered_sentence2_features, dim=0)
 
-        return all_image1_features, all_image2_features, all_text_features, all_sentence1_features, all_sentence2_features
+        return all_image1_features, all_image2_features, all_text1_features, all_text2_features, all_sentence1_features, all_sentence2_features
 
     def forward(self, outputs):
         image1_embed = outputs['image1_embed']
         image2_embed = outputs['image2_embed']
-        text_embed = outputs['text_embed']
+        text1_embed = outputs['text1_embed']
+        text2_embed = outputs['text2_embed']
         sentence1_features = outputs['sentence1_features']
         sentence2_features = outputs['sentence2_features']
         logit_scale = outputs['logit_scale']
@@ -68,11 +73,12 @@ class CLIPLoss(nn.Module):
         # normalized features
         image1_embed = F.normalize(image1_embed, dim=-1, p=2)
         image2_embed = F.normalize(image2_embed, dim=-1, p=2)
-        text_embed = F.normalize(text_embed, dim=-1, p=2)
+        text1_embed = F.normalize(text1_embed, dim=-1, p=2)
+        text2_embed = F.normalize(text2_embed, dim=-1, p=2)
 
         ###-----###
-        image1_embed_all, image2_embed_all, text_embed_all, all_sentence1_features, all_sentence2_features = self.gather_features(
-            image1_features=image1_embed, image2_features=image2_embed, text_features=text_embed, sentence1_features=sentence1_features, sentence2_features=sentence2_features
+        image1_embed_all, image2_embed_all, text1_embed_all, text2_embed_all, all_sentence1_features, all_sentence2_features = self.gather_features(
+            image1_features=image1_embed, image2_features=image2_embed, text1_features=text1_embed, text2_features=text2_embed, sentence1_features=sentence1_features, sentence2_features=sentence2_features
         )
         ###=----###
         # gather features from all GPUs
@@ -80,8 +86,8 @@ class CLIPLoss(nn.Module):
         #     utils.all_gather_batch([image1_embed, text_embed])
 
         # cosine similarity as logits
-        logits_per_image1 = logit_scale * image1_embed_all @ text_embed_all.t()
-        logits_per_text1 = logit_scale * text_embed_all @ image1_embed_all.t()
+        logits_per_image1 = logit_scale * image1_embed_all @ text2_embed_all.t()
+        logits_per_text1 = logit_scale * text2_embed_all @ image1_embed_all.t()
 
         local_batch_size = logits_per_image1.size(0)
         device = image1_embed.device
@@ -95,8 +101,8 @@ class CLIPLoss(nn.Module):
         #     utils.all_gather_batch([image2_embed, text_embed])
 
         # cosine similarity as logits
-        logits_per_image2 = logit_scale * image2_embed_all @ text_embed_all.t()
-        logits_per_text2 = logit_scale * text_embed_all @ image2_embed_all.t()
+        logits_per_image2 = logit_scale * image2_embed_all @ text1_embed_all.t()
+        logits_per_text2 = logit_scale * text1_embed_all @ image2_embed_all.t()
 
         loss2 = (F.cross_entropy(logits_per_image2, labels) + \
             F.cross_entropy(logits_per_text2, labels)) / 2
