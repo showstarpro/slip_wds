@@ -418,14 +418,14 @@ def get_wds_dataset(args, preprocess_img, is_train, epoch=0, floor=False, tokeni
         image1 = preprocess_img(img)  # Apply first transformation
         image2 = preprocess_img(img)  # Apply first transformation
         # origin_txt = tokenizer(sample['text']['caption']) 
-        shortLLA_txt = tokenizer(sample['text']['shortLLA_captions'])  
+        # shortLLA_txt = tokenizer(sample['text']['shortLLA_captions'])  
         longLLA_txt = tokenizer(sample['text']['longLLA_captions'])
         # shortIB_txt = tokenizer(sample['text']['shortIB_captions'])
-        # longIB_txt = tokenizer(sample['text']['longIB_captions'])
+        longIB_txt = tokenizer(sample['text']['longIB_captions'])
         # shortSV_txt = tokenizer(sample['text']['shortSV_captions'])
         # longSV_txt = tokenizer(sample['text']['longSV_captions'])
         # txt = tokenizer(sample['text'])
-        return {"image1": image1, "image2": image2, "text1": shortLLA_txt, "text2": longLLA_txt}  # Assume "text" is the label key
+        return {"image1": image1, "image2": image2, "text1": longLLA_txt, "text2": longIB_txt}  # Assume "text" is the label key
     pipeline.extend([
         wds.select(filter_no_caption_or_no_image),
         wds.decode("pilrgb", handler=log_and_continue),
